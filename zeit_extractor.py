@@ -47,6 +47,7 @@ RESORTS_ORDER = [
     'Krimi Spezial',
     'ZEIT der Leser',
     'Kinder und Jugendbuch',
+    'Olympia',
     'Hamburg',
     'Schweiz',
     'Oesterreich',
@@ -60,6 +61,7 @@ RESORT_ORDER_MATCH_TRESHOLD = 0.75
 # Use this list to define some resorts to skip in any case.
 RESORTS_BLACKLIST = [
     'Zeit zum Entdecken',
+    'Golfen',
     'Hamburg',
     'Schweiz',
     'Oesterreich',
