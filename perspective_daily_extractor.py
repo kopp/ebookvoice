@@ -10,6 +10,10 @@ from html.parser import HTMLParser
 
 import argparse
 
+import requests # TODO: use requests instead of urllib
+import configparser # read login info from file
+import os.path # exists, expanduser
+
 # setup logger
 import logging
 import sys
@@ -20,13 +24,35 @@ LOG.addHandler(logging.StreamHandler(sys.stdout))
 # encoding to assume for web pages
 ENCODING = 'utf-8'
 
-# regular expression to find article content
-ARTICLE_RE = re.compile(
-        r'<div class="content" ng-show="tab==\'article\'">(.*)<div class="infos" ng-show="tab==\'article\'">',
-        flags=re.DOTALL)
+# regular expressions to find article content
+# Note: one of them should match...
+ARTICLE_RE = [
+        re.compile(
+            r'<div class="content" ng-show="tab==\'article\'">(.*)<div class="infos" ng-show="tab==\'article\'">',
+        flags=re.DOTALL),
+
+        re.compile(
+            r'<div class="content" ng-show="tab==\'article\'">(.*)<div ng-show="tab==\'discussions\'" class="discussion">',
+        flags=re.DOTALL),
+        ]
 
 
 
+# Base url of the page
+BASE_URL = 'https://perspective-daily.de'
+
+# Relative path to login
+LOGIN_PATH = '/enrol/login'
+
+# RE to get latest article
+LATEST_ARTICLE_RE = re.compile(r'<a href="/article/([0-9]+)')
+
+# Section under which username/password need to be stored in config file
+CONFIG_FILE_SECTION = 'perspective-daily.de login'
+# Key for email address
+CONFIG_FILE_EMAIL = 'email'
+# Key for password
+CONFIG_FILE_PASSWORD = 'password'
 
 
 class TagMatcher:
@@ -143,7 +169,22 @@ class PerspectiveDailyArticleParser(HTMLParser):
 
 
 
-def get_article(article_url):
+def extract_article_from_html(html):
+    '''
+    Extract article content from opening to closing div from html text.
+    :param html str: correctly encoded html from page or None if unable to extract
+    '''
+    # try each regexp...
+    for regexp in ARTICLE_RE:
+        match = regexp.search(html)
+        if match:
+            article = match.group(1)
+            return article
+    # if none works, return None
+    return None
+
+
+def get_article_by_url(article_url):
     '''
     Download content of the given web page.
     :return str: article in html (from opening to closing div)
@@ -152,12 +193,30 @@ def get_article(article_url):
     with urllib.request.urlopen(req) as resp:
         html = resp.read().decode(ENCODING)
         # search for the article text
-        match = ARTICLE_RE.search(html)
-        if match:
-            article = match.group(1)
+        article = extract_article_from_html(html)
+        if article:
             return article
         else:
             raise ValueError('Unable to find the article on page {}'.format(article_url))
+
+
+def get_article_by_number(article_number, session):
+    '''
+    Download content of the given article number.
+    :param article_number int: Number to download
+    :param session requests.Session: session that is correctly logged on
+    :return str: article in plain text or None if unable to get that article
+    '''
+    url = '{}/article/{}'.format(BASE_URL, article_number)
+    article = session.get(url)
+    if not article:
+        LOG.warn('Unable to download article number {}'.format(article_number))
+        return None
+    else:
+        LOG.debug('Successfully accessed article no {} at {}: {}'.format(article_number, url, article))
+        #LOG.debug('Article text: {}'.format(article.text))
+        return extract_article_from_html(article.text)
+
 
 
 def parse_article(article):
@@ -174,26 +233,160 @@ def parse_article(article):
     return parser.get_text()
 
 
+# How to log into a web site:
+# http://stackoverflow.com/questions/2910221/how-can-i-login-to-a-website-with-python
+# Sending just email and password will fail because a CSRF-Cookie is used.
+# When logging in, the login site provides an hidden input field such as
+#     <input type='hidden' name='csrfmiddlewaretoken' value='rfA4P2NWy4AyXLin5Z9V82yfp3ZtNpSo' />
+# which must be parsed using something like
+#       TOKEN_RE = re.compile(r'<input type=\'hidden\' name=\'csrfmiddlewaretoken\' value=\'([a-zA-Z0-9]+)\' />')
+#       TOKEN_RE.search(login_page.text).group(1)
+# or extracted from a cookie that was set;
+# http://stackoverflow.com/questions/13567507/passing-csrftoken-with-python-requests
+
+def log_in(email_address, password):
+    '''
+    Log into the web site.
+    Return session that can be used to access articles.
+    :return Tuple<requests.Session, int>: (session that will be logged into the
+        site or None in case of an error, number of most recent article or None
+        in case of an error).
+    '''
+    # create the session that will store cookies etc
+    session = requests.session()
+    # get first token
+    login_url = BASE_URL + LOGIN_PATH
+    login_page = session.get(login_url)
+    if login_page:
+        LOG.debug('Logging in to page {}: {}'.format(login_url, login_page))
+    else:
+        LOG.error('Unable to access login url {}: {}'.format(login_url, login_page))
+        return (None, None)
+    # setup post request
+    try:
+        values = {
+                'email' : email_address,
+                'password' : password,
+                'csrfmiddlewaretoken' : session.cookies['csrftoken'],
+                }
+    except KeyError:
+        LOG.error('Unable to extract csrftoken from cookies')
+        return (None, None)
+    LOG.debug('csrfmiddlewaretoken is {}'.format(values['csrfmiddlewaretoken']))
+    # execute post request
+    article_overview = session.post(login_url, data=values)
+    if article_overview:
+        LOG.debug('Posting login to {}; getting {}'.format(login_url, article_overview))
+    else:
+        LOG.error('Unable to login to {}: {}'.format(login_url, article_overview))
+        return (None, None)
+    latest_article_match = LATEST_ARTICLE_RE.search(article_overview.text)
+    latest_article = None
+    if latest_article_match:
+        latest_article = int(latest_article_match.group(1))
+        LOG.debug('latest article seems to be number {}'.format(latest_article))
+    else:
+        LOG.error('Unable to get number of the latest article after login')
+    return (session, latest_article)
+
+
+def _get_config_field(config_section, field, ask_user):
+    '''
+    Extract the filed from the config section.
+    If ask_user and the field is not found, ask the user.
+    :param config_section Section (ConfigParser()[section]): section to look in
+    :param field str: name of the field
+    :param ask_user bool: whether to ask the user
+    :return str: value or None if unable to get it
+    '''
+    try:
+        value = config_section[field]
+    except KeyError:
+        LOG.error('{}/{} not found in config file'.format(config_section.name, field))
+        if ask_user:
+            value = input('field (add this to section {}, key {} in config file): '.format(
+                config_section.name, field))
+        else:
+            value = None
+    return value
+
+
+
+
+def read_login_info_from_file(filepath, ask_user):
+    '''
+    Extract login information from file.
+    :param ask_user bool: If true, ask the user for input.
+    :return tuple<str, str>: (email, password); each may be None if not in
+        config file (or file not found)
+    '''
+    # TODO: Store password encrypted
+    email = None
+    password = None
+    # try to get input from config file
+    if os.path.exists(filepath):
+        # read config from file
+        config = configparser.ConfigParser()
+        config.read(filepath)
+        # check that section is there
+        try:
+            section = config[CONFIG_FILE_SECTION]
+            email = _get_config_field(section, CONFIG_FILE_EMAIL, ask_user)
+            password = _get_config_field(section, CONFIG_FILE_PASSWORD, ask_user)
+        except KeyError:
+            LOG.error('Section {} not found in config file {}'.format(CONFIG_FILE_SECTION, filepath))
+    else:
+        LOG.warning('config file {} not found; make sure to add one'.format(filepath))
+
+    if ask_user:
+        if not email:
+            email = input('email: ')
+        if not password:
+            password = input('password: ')
+    return (email, password)
 
 
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='Download a Perspective Daily article and convert it to plain text')
-    parser.add_argument('url', type=str,
-                   help='url of the PD article')
+    parser = argparse.ArgumentParser(
+            description='Download a Perspective Daily article and convert it to plain text',
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter
+            )
+    parser.add_argument('identifier', type=str, metavar="url|number",
+                   help='url or number of the PD article; number requires login information')
     parser.add_argument('output_file', type=str, default="/tmp/perspective_daily.txt", nargs='?',
 		       help='Output file for the article.')
     parser.add_argument('--debug', action='store_const', dest='log_level',
             const=logging.DEBUG, default=logging.INFO,
             help='enable debug output')
+    parser.add_argument('--config', type=str, metavar='path_to_config_file',
+            default='~/.perspective_daily.ini',
+            help='alternative path to the configuration file')
 
     args = parser.parse_args()
 
+    # expand paths
+    out_path = os.path.expanduser(args.output_file)
+    config_path = os.path.expanduser(args.config)
+
     LOG.setLevel(args.log_level)
 
-    html = get_article(args.url)
+    # check, whether identifier is url or number
+    html = None # extracted content
+    if args.identifier.isnumeric():
+        # get username/password
+        email, password = read_login_info_from_file(config_path, True)
+        # login
+        session, latest_article = log_in(email, password)
+        # access article
+        html = get_article_by_number(args.identifier, session)
+        if not html:
+            sys.exit(1)
+    else: # assume that is is a url
+        html = get_article_by_url(args.identifier)
+
     text = parse_article(html)
-    LOG.info('Going to write output to file {}'.format(args.output_file))
+    LOG.info('Going to write output to file {}'.format(out_path))
     with open(args.output_file, 'w') as f:
         f.write(text)
