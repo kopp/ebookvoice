@@ -512,7 +512,7 @@ def parse_arguments_and_execute():
                 # skip article if in blacklist
                 if do_blacklist:
                     if any((SM(None, article.get_resort(), resort).ratio() > RESORT_BLACKLIST_MATCH_TRESHOLD) for resort in RESORTS_BLACKLIST):
-                        logging.info('Skipping article {} that is ob blacklist'.format(article.get_meta()))
+                        logging.info('Skipping article {} that is on blacklist'.format(article.get_meta()))
                         continue
                 # append article to newspaper
                 paper.append(article)
