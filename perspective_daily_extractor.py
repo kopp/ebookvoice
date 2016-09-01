@@ -103,6 +103,7 @@ class PerspectiveDailyArticleParser(HTMLParser):
             TagMatcher('cite', []),
             TagMatcher('q', [('class', 'quote')]),
             TagMatcher('figure', []),
+            TagMatcher('div', [('class', 'script')]),
             ]
 
     # closing tag that produces an endline in the text
