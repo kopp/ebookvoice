@@ -64,6 +64,10 @@ COMMANDS = [ 'latest' ]
 # - X-Y
 # -> Define map<regexp, function> to interpret the commands?
 
+# TODO:
+# parser; p.e. 42, 48, 66
+
+
 class TagMatcher:
     '''
     Class to match a tag and possibly a set of attributes.
