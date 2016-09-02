@@ -55,6 +55,15 @@ CONFIG_FILE_EMAIL = 'email'
 CONFIG_FILE_PASSWORD = 'password'
 
 
+# identifiers (commands to get certain articles)
+COMMANDS = [ 'latest' ]
+
+# TODO: Add commands
+# - latest: get only the latest article
+# - unknown: get all unknown ones (store known/unknown in the config file)
+# - X-Y
+# -> Define map<regexp, function> to interpret the commands?
+
 class TagMatcher:
     '''
     Class to match a tag and possibly a set of attributes.
@@ -354,8 +363,9 @@ if __name__ == '__main__':
             description='Download a Perspective Daily article and convert it to plain text',
             formatter_class=argparse.ArgumentDefaultsHelpFormatter
             )
-    parser.add_argument('identifier', type=str, metavar="url|number",
-                   help='url or number of the PD article; number requires login information')
+    parser.add_argument('identifier', type=str, metavar="url|number|command",
+                   help='url or number of the PD article or one command '\
+                           'of {}; number or command requires login information'.format(COMMANDS))
     parser.add_argument('output_file', type=str, default="/tmp/perspective_daily.txt", nargs='?',
 		       help='Output file for the article.')
     parser.add_argument('--debug', action='store_const', dest='log_level',
@@ -384,9 +394,11 @@ if __name__ == '__main__':
         html = get_article_by_number(args.identifier, session)
         if not html:
             sys.exit(1)
+    elif args.identifier in COMMANDS:
+        LOG.error('not yet supported')
+        sys.exit(2)
     else: # assume that is is a url
         html = get_article_by_url(args.identifier)
-
     text = parse_article(html)
     LOG.info('Going to write output to file {}'.format(out_path))
     with open(args.output_file, 'w') as f:
