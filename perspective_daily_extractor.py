@@ -119,6 +119,12 @@ class PerspectiveDailyArticleParser(HTMLParser):
             TagMatcher('div', [('class', 'script')]),
             ]
 
+    # tags that will never get closed -- they need to be ignored in the
+    # ignore-stack
+    _NEVER_CLOSED_TAGS = [
+            'br'
+            ]
+
     # closing tag that produces an endline in the text
     _CLOSING_TAG_ENDLINE_LIST = [ 'p', ]
 
@@ -134,9 +140,14 @@ class PerspectiveDailyArticleParser(HTMLParser):
         '''
         LOG.debug("Encountered a start tag {} with attributes {}".format(tag, attrs))
         if self._ignore_stack:
-            LOG.debug('Since this is in an ignore section (stack is {}), add {} to the stack'.format(
-                self._ignore_stack, tag))
-            self._ignore_stack.append(tag)
+            if tag in PerspectiveDailyArticleParser._NEVER_CLOSED_TAGS:
+                LOG.debug('This is an ignored section (stack is {}) but {} '\
+                        'will not be closed, so do not add it to the stack'.format(
+                            self._ignore_stack, tag))
+            else:
+                LOG.debug('Since this is in an ignore section (stack is {}), add {} to the stack'.format(
+                    self._ignore_stack, tag))
+                self._ignore_stack.append(tag)
         else:
             if any(ignored.match(tag, attrs) for ignored in PerspectiveDailyArticleParser._IGNORE_LIST):
                 LOG.debug(' -- This tag is on the ignored list.  Ignoring stuff from now on.')
