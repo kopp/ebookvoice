@@ -64,9 +64,6 @@ COMMANDS = [ 'latest' ]
 # - X-Y
 # -> Define map<regexp, function> to interpret the commands?
 
-# TODO:
-# parser; p.e. 42, 48, 66
-
 
 class TagMatcher:
     '''
@@ -125,6 +122,11 @@ class PerspectiveDailyArticleParser(HTMLParser):
             'br'
             ]
 
+    # prefix to distinguish closing tags in the stack from opening tags.
+    # see in handle_endtag for more details
+    _ANTI_TAG_PREFIX = '__anti_tag__'
+    _ANTI_TAG_RE = re.compile(_ANTI_TAG_PREFIX + '([a-zA-Z]+)')
+
     # closing tag that produces an endline in the text
     _CLOSING_TAG_ENDLINE_LIST = [ 'p', ]
 
@@ -145,6 +147,20 @@ class PerspectiveDailyArticleParser(HTMLParser):
                         'will not be closed, so do not add it to the stack'.format(
                             self._ignore_stack, tag))
             else:
+                # check, if an anti-tag is on the stack
+                match = PerspectiveDailyArticleParser._ANTI_TAG_RE.match(self._ignore_stack[-1])
+                if match:
+                    LOG.debug(' -- top most item on stack is anti-tag for {}'.format(
+                        match.group(1)))
+                    if tag == match.group(1):
+                        self._ignore_stack.pop()
+                        LOG.debug(' -- this is the tag matching an anti tag; '\
+                                'popping (stack is now {})'.format(self._ignore_stack))
+                        return
+                    else:
+                        LOG.debug(' -- tag does not match anti tag')
+                        # maybe this will require more elaborate error handling
+                # actual stack functionality: push opening to stack
                 LOG.debug('Since this is in an ignore section (stack is {}), add {} to the stack'.format(
                     self._ignore_stack, tag))
                 self._ignore_stack.append(tag)
@@ -164,8 +180,17 @@ class PerspectiveDailyArticleParser(HTMLParser):
         if self._ignore_stack:
             if self._ignore_stack[-1] == tag:
                 self._ignore_stack.pop()
+            # Maybe it will become necessary to check here for an anti-tag on
+            # the stack and compare the current tag to the element before the
+            # anti-tag.
             else:
                 LOG.warn('Misformat: Closing tag {} found in stack {}'.format(tag, self._ignore_stack))
+                # In PD articles, it may happen that a span begins and contains
+                # "text</p><p>text".  In order to recover this, add an
+                # anti-p-tag from </p> and pop that using the pro-p-tag.
+                anti_tag = PerspectiveDailyArticleParser._ANTI_TAG_PREFIX + tag
+                LOG.debug('Adding anti-tag {} to stack'.format(anti_tag))
+                self._ignore_stack.append(anti_tag)
         else:
             if tag in PerspectiveDailyArticleParser._CLOSING_TAG_ENDLINE_LIST:
                 LOG.debug('Introducing a newline in the text')
