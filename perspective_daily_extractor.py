@@ -36,6 +36,11 @@ ARTICLE_RE = [
         flags=re.DOTALL),
         ]
 
+# get article number from url
+ARTICLE_NUMBER_FROM_URL_RE = re.compile(r'.*perspective-daily.de/article/([0-9]+).*')
+
+# default output name
+DEFAULT_OUT_NAME = 'pd{number}.txt'
 
 
 # Base url of the page
@@ -406,8 +411,9 @@ if __name__ == '__main__':
     parser.add_argument('identifier', type=str, metavar="url|number|command",
                    help='url or number of the PD article or one command '\
                            'of {}; number or command requires login information'.format(COMMANDS))
-    parser.add_argument('output_file', type=str, default="/tmp/perspective_daily.txt", nargs='?',
-		       help='Output file for the article.')
+    parser.add_argument('--outputfile', type=str,
+		       help='Output file for the article, by default outputs to {}.'.format(
+                           DEFAULT_OUT_NAME))
     parser.add_argument('--debug', action='store_const', dest='log_level',
             const=logging.DEBUG, default=logging.INFO,
             help='enable debug output')
@@ -418,7 +424,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # expand paths
-    out_path = os.path.expanduser(args.output_file)
+    out_path = args.outputfile # if out path is none, set it later (when article number is known)
+    if args.outputfile is not None:
+        out_path = os.path.expanduser(args.outputfile)
     config_path = os.path.expanduser(args.config)
 
     LOG.setLevel(args.log_level)
@@ -426,20 +434,33 @@ if __name__ == '__main__':
     # check, whether identifier is url or number
     html = None # extracted content
     if args.identifier.isnumeric():
+        number = int(args.identifier)
         # get username/password
         email, password = read_login_info_from_file(config_path, True)
         # login
         session, latest_article = log_in(email, password)
         # access article
-        html = get_article_by_number(args.identifier, session)
+        html = get_article_by_number(number, session)
         if not html:
             sys.exit(1)
+        # set output path
+        out_path = DEFAULT_OUT_NAME.format(number=number)
     elif args.identifier in COMMANDS:
         LOG.error('not yet supported')
         sys.exit(2)
     else: # assume that is is a url
-        html = get_article_by_url(args.identifier)
+        # try to get url number
+        url = args.identifier
+        url_match = ARTICLE_NUMBER_FROM_URL_RE.match(url)
+        if url_match:
+            number = url_match.group(1)
+            out_path = DEFAULT_OUT_NAME.format(number=number)
+        else:
+            out_path = DEFAULT_OUT_NAME.format(number=('_' + re.sub('[^a-zA-Z0-9]', '', url)))
+        html = get_article_by_url(url)
+
     text = parse_article(html)
+
     LOG.info('Going to write output to file {}'.format(out_path))
-    with open(args.output_file, 'w') as f:
+    with open(out_path, 'w') as f:
         f.write(text)
