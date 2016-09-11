@@ -41,6 +41,8 @@ ARTICLE_NUMBER_FROM_URL_RE = re.compile(r'.*perspective-daily.de/article/([0-9]+
 
 # default output name
 DEFAULT_OUT_NAME = 'pd{number}.txt'
+# patterns for output file should look like this
+OUT_PATTERN_RE = re.compile('.*{number}.*')
 
 
 # Base url of the page
@@ -53,21 +55,28 @@ LOGIN_PATH = '/enrol/login'
 LATEST_ARTICLE_RE = re.compile(r'<a href="/article/([0-9]+)')
 
 # Section under which username/password need to be stored in config file
-CONFIG_FILE_SECTION = 'perspective-daily.de login'
+CONFIG_FILE_SECTION_LOGIN =         'perspective-daily.de login'
 # Key for email address
-CONFIG_FILE_EMAIL = 'email'
+CONFIG_FILE_KEY_EMAIL =             'email'
 # Key for password
-CONFIG_FILE_PASSWORD = 'password'
+CONFIG_FILE_KEY_PASSWORD =          'password'
+# section for known articles
+CONFIG_FILE_SECTION_ARTICLES =      'perspective-daily.de articles'
+# Key for known articles
+CONFIG_FILE_KEY_KNOWN =             'known articles'
+# Key for non-existent articles (numbers that are not used)
+CONFIG_FILE_KEY_NONEXISTENT =       'unasigned numbers'
 
 
-# identifiers (commands to get certain articles)
-COMMANDS = [ 'latest' ]
+# commands to get certain articles
+# this is a map of identifier to description
+COMMANDS = {
+        'latest' :          'Return only the latest article.',
+        'unknown':          'Return all unknown articles',
+        '<numA>-<numB>' :   'Return a range of articles identified by numbers from numA to numB'
+        }
 
-# TODO: Add commands
-# - latest: get only the latest article
-# - unknown: get all unknown ones (store known/unknown in the config file)
-# - X-Y
-# -> Define map<regexp, function> to interpret the commands?
+COMMAND_RANGE_RE = re.compile('^([0-9]+)-([0-9]+)$')
 
 
 class TagMatcher:
@@ -110,9 +119,10 @@ class PerspectiveDailyArticleParser(HTMLParser):
         - stuff within <cite>
         - stuff within <q class="quote"
         - stuff within <figure>
+        - stuff within <span class="script">
     '''
 
-    # opening tags from which on to ignore text
+    # opening tags from which on to ignore text (keep in sync with class comment!)
     _IGNORE_LIST = [
             TagMatcher('span', [('class', 'info')]),
             TagMatcher('cite', []),
@@ -124,7 +134,13 @@ class PerspectiveDailyArticleParser(HTMLParser):
     # tags that will never get closed -- they need to be ignored in the
     # ignore-stack
     _NEVER_CLOSED_TAGS = [
-            'br'
+            'br',
+            'input', # see e.g. pd43
+            ]
+
+    # these tags are closed often, but not always :-/
+    _SOMETIMES_NOT_CLOSED_TAGS = [
+            'img', # most often it's <img .../> but there is also e.g. pd67
             ]
 
     # prefix to distinguish closing tags in the stack from opening tags.
@@ -185,17 +201,30 @@ class PerspectiveDailyArticleParser(HTMLParser):
         if self._ignore_stack:
             if self._ignore_stack[-1] == tag:
                 self._ignore_stack.pop()
+            elif tag in PerspectiveDailyArticleParser._NEVER_CLOSED_TAGS:
+                LOG.warning('Encountered end tag {} which should never happen; ignoring it.'.format(tag))
             # Maybe it will become necessary to check here for an anti-tag on
             # the stack and compare the current tag to the element before the
             # anti-tag.
             else:
                 LOG.warn('Misformat: Closing tag {} found in stack {}'.format(tag, self._ignore_stack))
-                # In PD articles, it may happen that a span begins and contains
-                # "text</p><p>text".  In order to recover this, add an
-                # anti-p-tag from </p> and pop that using the pro-p-tag.
-                anti_tag = PerspectiveDailyArticleParser._ANTI_TAG_PREFIX + tag
-                LOG.debug('Adding anti-tag {} to stack'.format(anti_tag))
-                self._ignore_stack.append(anti_tag)
+
+                # check, whether the tag before is not closed always
+                if self._ignore_stack[-1] in PerspectiveDailyArticleParser._SOMETIMES_NOT_CLOSED_TAGS:
+                    # if so, pop that
+                    LOG.warn('This may be because the previous tag was not '\
+                            'closed (which is a known PD issue).  Removing '\
+                            'that and trying to handle this end tag again.')
+                    self._ignore_stack.pop()
+                    self.handle_endtag(tag)
+                else:
+                    # otherwise check other recovery options
+                    # In PD articles, it may happen that a span begins and contains
+                    # "text</p><p>text".  In order to recover this, add an
+                    # anti-p-tag from </p> and pop that using the pro-p-tag.
+                    anti_tag = PerspectiveDailyArticleParser._ANTI_TAG_PREFIX + tag
+                    LOG.debug('Adding anti-tag {} to stack'.format(anti_tag))
+                    self._ignore_stack.append(anti_tag)
         else:
             if tag in PerspectiveDailyArticleParser._CLOSING_TAG_ENDLINE_LIST:
                 LOG.debug('Introducing a newline in the text')
@@ -224,10 +253,89 @@ class PerspectiveDailyArticleParser(HTMLParser):
 
 
 
+def read_known_numbers_from_config(filename, sectionname, keyname):
+    '''
+    Read list of known numbers from given config file.
+    :return set<int>: list of known numbers
+    '''
+    c = configparser.ConfigParser()
+    if not c.read(filename):
+        raise ValueError('Config file at {} does not exist'.format(filename))
+    # check if section exists
+    try:
+        section = c[sectionname]
+    except KeyError:
+        raise ValueError('Config file {} should contain a section "{}"'.format(
+            filename, sectionname))
+    try:
+        values_one_string = section[keyname]
+    except KeyError:
+        # if keyword does not exist, no articles are known
+        LOG.info('There is no key "{}" in section "{}" of file {} with known '\
+                'numbers; assuming none'.format(keyname, sectionname, filename))
+        return set() # empty
+    values = set() # collect numbers
+    values_strings = re.sub('\s', '', values_one_string).split(',')
+    for value in values_strings:
+        if value: # ignore empty strings
+            if not value.isnumeric():
+                LOG.warning('error: value "{}" of key "{}" in section "{}" of '\
+                        'file {} should be numeric; ignoring it.'.format(
+                            value, keyname, sectionname, filename))
+            else:
+                values.add(int(value))
+    return values
+
+
+def append_write_known_numbers_to_config(filename, sectionname, keyname, numbers, break_after=10):
+    '''
+    Modify the given configuration file to contain the new list of numbers,
+    overwriting the old.
+    :param numbers iterable<convertible-to-int>: numbers to write
+    :param break_after int: insert newline after thus many numbers; set to 0 to
+    not insert breaks.
+    '''
+    c = configparser.ConfigParser()
+    c.read(filename)
+    # make sure that numbers are really numbers and unique
+    new_numbers = set()
+    for num in numbers:
+        try:
+            value = int(num)
+            new_numbers.add(value)
+        except ValueError as e:
+            print('Ignoring non-numeric value {} from numbers list ({})'.format(num, e))
+    current_numbers = read_known_numbers_from_config(filename, sectionname, keyname)
+    # numbers to write are new numbers and known numbers
+    numbers_to_write = current_numbers.union(new_numbers)
+    # check, if a change is necessary
+    # this is the case, when the new numbers are already contained in the current numbers
+    if current_numbers == numbers_to_write:
+        LOG.debug('new numbers are already contained in known numbers; '\
+                'nothing needs to be changed in config file')
+    else:
+        LOG.info('numbers changed from {} to {}'.format(current_numbers, numbers_to_write))
+        values_one_string = '' # formatted string
+        nrs_in_line = 0 # number of numbers in the current line
+        for num in sorted(numbers_to_write): # output numbers sorted
+            if break_after and nrs_in_line == break_after:
+                values_one_string += '\n' # add newline and indent
+                nrs_in_line = 0
+            values_one_string += ' {},'.format(num)
+            nrs_in_line += 1
+        # commit new values to config struct
+        c[sectionname][keyname] = values_one_string.strip()
+        # write to file
+        with open(filename, 'w') as cfg:
+            c.write(cfg)
+
+
+
 def extract_article_from_html(html):
     '''
     Extract article content from opening to closing div from html text.
-    :param html str: correctly encoded html from page or None if unable to extract
+    :param html str: correctly encoded html from page
+    :return str: html content of the article or None if unable to extract
     '''
     # try each regexp...
     for regexp in ARTICLE_RE:
@@ -260,13 +368,14 @@ def get_article_by_number(article_number, session):
     Download content of the given article number.
     :param article_number int: Number to download
     :param session requests.Session: session that is correctly logged on
-    :return str: article in plain text or None if unable to get that article
+    :return str: article in html (from opening to closing div) or GET-reply
+        that evalutes to False if unable to get that article
     '''
     url = '{}/article/{}'.format(BASE_URL, article_number)
     article = session.get(url)
     if not article:
         LOG.warn('Unable to download article number {}'.format(article_number))
-        return None
+        return article
     else:
         LOG.debug('Successfully accessed article no {} at {}: {}'.format(article_number, url, article))
         #LOG.debug('Article text: {}'.format(article.text))
@@ -274,18 +383,101 @@ def get_article_by_number(article_number, session):
 
 
 
-def parse_article(article):
+class Article:
     '''
-    Parse article content.
-    :param article str: article text
-    :return str: article in plain text
+    Simple struct to hold article text
     '''
-    #import xml.etree.ElementTree as ET
-    #xml = '<article>' + article + '</article>' # this would be necessary to add add a top level tag as required by xml
-    #root = ET.fromstring(xml) # this does not work because the stuff from the website is malformed
-    parser = PerspectiveDailyArticleParser()
-    parser.feed(article)
-    return parser.get_text()
+    def __init__(self, identifier, text=None):
+        self._identifier = identifier
+        self._text = text
+
+    def get_identifier(self):
+        return self._identifier
+
+    def is_impossible_to_get(self):
+        '''Whether it is impossible to get the article.'''
+        return self._text is None
+
+    def get_text(self):
+        '''
+        Return text as plain text.
+        '''
+        return self._text
+
+    def get_article_number(self):
+        '''
+        Return the article number if it's known, otherwise return None
+        '''
+        try:
+            numeric_value = int(self._identifier)
+            return numeric_value
+        except ValueError:
+            return None
+
+    def get_article_as_plain_text(self):
+        '''
+        Parse article content.
+        Assumes that self._text is article text in html from opening to closing div
+        :return str: article in plain text
+        '''
+        #import xml.etree.ElementTree as ET
+        #xml = '<article>' + article + '</article>' # this would be necessary to add add a top level tag as required by xml
+        #root = ET.fromstring(xml) # this does not work because the stuff from the website is malformed
+        parser = PerspectiveDailyArticleParser()
+        parser.feed(self._text)
+        return parser.get_text()
+
+
+
+def get_many_articles(numbers_or_urls, session):
+    '''
+    Try to access a list of articles referenced either by url or by number.
+    :param numbers_or_urls iterable<str|convertible-to-int>: elements to download
+    :return (list<Article>, list<identifier>): Each article is returned as
+        Article object.  Its identifier is set to the article number.  If
+        unable to get a number for the article, some other identifier (e.g.
+        from url) is used.  If it's not possible to get an article, its
+        identifier is returned in the second list.
+    '''
+    articles = list()
+    failures = list()
+    for identifier in numbers_or_urls:
+        html = None
+        unique_identifier = None # may be number or derived from url
+        if is_number(identifier):
+            number = int(identifier)
+            html = get_article_by_number(number, session)
+        else:
+            html = get_article_by_url(url)
+            # get unique_identifier
+            url_match = ARTICLE_NUMBER_FROM_URL_RE.match(url)
+            if url_match:
+                unique_identifier = url_match.group(1)
+            else:
+                unique_identifier = 'url_' + re.sub('[^a-zA-Z0-9]', '', url)
+        # sort outcome of operation depending on success/failure
+        if not html:
+            LOG.warning('Unable to get article {} due to {}'.format(identifier, html))
+            failures.append(identifier)
+        else:
+            articles.append(Article(identifier, html))
+    # return what was fetched
+    return articles, failures
+
+
+def save_list_of_articles(articles, outfile_pattern):
+    '''
+    Store the given articles to outfiles generated from given pattern.
+    :param articles list<Article>: valid articles to store
+    :param outfile_pattern str: pattern for outfile, should include a
+        "{number}".
+    '''
+    for art in articles:
+        filename = outfile_pattern.format(number=art.get_identifier())
+        LOG.info('Going to write output to file {}'.format(filename))
+        with open(filename, 'w') as f:
+            f.write(art.get_article_as_plain_text())
+
 
 
 # How to log into a web site:
@@ -385,11 +577,11 @@ def read_login_info_from_file(filepath, ask_user):
         config.read(filepath)
         # check that section is there
         try:
-            section = config[CONFIG_FILE_SECTION]
-            email = _get_config_field(section, CONFIG_FILE_EMAIL, ask_user)
-            password = _get_config_field(section, CONFIG_FILE_PASSWORD, ask_user)
+            section = config[CONFIG_FILE_SECTION_LOGIN]
+            email = _get_config_field(section, CONFIG_FILE_KEY_EMAIL, ask_user)
+            password = _get_config_field(section, CONFIG_FILE_KEY_PASSWORD, ask_user)
         except KeyError:
-            LOG.error('Section {} not found in config file {}'.format(CONFIG_FILE_SECTION, filepath))
+            LOG.error('Section {} not found in config file {}'.format(CONFIG_FILE_SECTION_LOGIN, filepath))
     else:
         LOG.warning('config file {} not found; make sure to add one'.format(filepath))
 
@@ -402,18 +594,33 @@ def read_login_info_from_file(filepath, ask_user):
 
 
 
+def is_number(str_or_int):
+    '''
+    Return True when input is either an integer or a string convertible to an integer.
+    '''
+    try:
+        value = int(str_or_int)
+        return True
+    except ValueError:
+        return False
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(
             description='Download a Perspective Daily article and convert it to plain text',
             formatter_class=argparse.ArgumentDefaultsHelpFormatter
             )
-    parser.add_argument('identifier', type=str, metavar="url|number|command",
-                   help='url or number of the PD article or one command '\
-                           'of {}; number or command requires login information'.format(COMMANDS))
-    parser.add_argument('--outputfile', type=str,
-		       help='Output file for the article, by default outputs to {}.'.format(
-                           DEFAULT_OUT_NAME))
+    parser.add_argument('identifiers', type=str, metavar="url|number|command", nargs='+',
+            help='url or number of the PD article or one command '\
+                    'of {}.  Number or command requires login information.'.format(
+                        ', '.join(['"{}" ({})'.format(c, d) for c, d in COMMANDS.items()])))
+    parser.add_argument('--outputfile', type=str, metavar='outfile_pattern',
+            default=DEFAULT_OUT_NAME,
+            help='Output file for the article.  If you intend to '\
+                    'output multiple files, make sure to use "{number}" in '\
+                    'that name; this will be substituted by the article '\
+                    'number (or other identification).')
     parser.add_argument('--debug', action='store_const', dest='log_level',
             const=logging.DEBUG, default=logging.INFO,
             help='enable debug output')
@@ -423,44 +630,127 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    # expand paths
-    out_path = args.outputfile # if out path is none, set it later (when article number is known)
-    if args.outputfile is not None:
-        out_path = os.path.expanduser(args.outputfile)
-    config_path = os.path.expanduser(args.config)
-
     LOG.setLevel(args.log_level)
 
-    # check, whether identifier is url or number
-    html = None # extracted content
-    if args.identifier.isnumeric():
-        number = int(args.identifier)
-        # get username/password
-        email, password = read_login_info_from_file(config_path, True)
-        # login
-        session, latest_article = log_in(email, password)
-        # access article
-        html = get_article_by_number(number, session)
-        if not html:
-            sys.exit(1)
-        # set output path
-        out_path = DEFAULT_OUT_NAME.format(number=number)
-    elif args.identifier in COMMANDS:
-        LOG.error('not yet supported')
-        sys.exit(2)
-    else: # assume that is is a url
-        # try to get url number
-        url = args.identifier
-        url_match = ARTICLE_NUMBER_FROM_URL_RE.match(url)
-        if url_match:
-            number = url_match.group(1)
-            out_path = DEFAULT_OUT_NAME.format(number=number)
+    # expand paths
+    out_path = os.path.expanduser(args.outputfile)
+    config_path = os.path.expanduser(args.config)
+
+    # check, whether out_path contains a pattern
+    if not OUT_PATTERN_RE.match(out_path):
+        LOG.warning('The output file pattern should contain a place holder '\
+                'for the article number; see --help.  If you download '\
+                'multiple files, this is a bad idea.')
+
+    # interpret identifier
+    identifiers_to_get = set() # this will be all the elements to download
+    session_latest_article = (None, None) # if a login was necessary, store session and latest article
+
+    for identifier in args.identifiers:
+        LOG.debug('Going to interpret identifier {}'.format(identifier))
+        # check, whehter it's a range of numbers
+        range_match = COMMAND_RANGE_RE.match(identifier)
+        if range_match:
+            numberA = int(range_match.group(1))
+            numberB = int(range_match.group(2))
+            number_begin =  max(min(numberA, numberB), 1) # smaller number; make sure >= 1
+            number_end =    max(max(numberA, numberB), 1) # larger number; make sure >= 1
+            LOG.debug('Going to add the range from {} to {} to articles to get.'.format(
+                number_begin, number_end))
+            identifiers_to_get = identifiers_to_get.union(set(range(number_begin, number_end+1)))
+        # command latest
+        elif identifier == 'latest':
+            if session_latest_article[1] is None: # check, if information is available
+                email, password = read_login_info_from_file(config_path, True)
+                session_latest_article = log_in(email, password)
+            if any(el is None for el in session_latest_article):
+                LOG.error('Unable to log in.  Skipping {}.'.format(identifier))
+                continue
+            identifiers_to_get.add(session_latest_article[1])
+        # command unknown
+        elif identifier == 'unknown':
+            # find out what's the latest article
+            if session_latest_article[1] is None: # check, if information is available
+                email, password = read_login_info_from_file(config_path, True)
+                session_latest_article = log_in(email, password)
+            if any(el is None for el in session_latest_article):
+                LOG.error('Unable to log in.  Skipping {}.'.format(identifier))
+                continue
+            # add all from first to latest without invalid or known ones
+            to_get = set(range(1, session_latest_article[1]))
+            # remove known ones from the list
+            try:
+                known = read_known_numbers_from_config(config_path,
+                        CONFIG_FILE_SECTION_ARTICLES, CONFIG_FILE_KEY_KNOWN)
+                to_get = to_get.difference(known)
+            except ValueError as e:
+                LOG.info('Unable to get all information about known/invalid '\
+                        'articles from config file: {}'.format(e))
+            # finally add those to the list to get
+            identifiers_to_get = identifiers_to_get.union(to_get)
+        # default: url
         else:
-            out_path = DEFAULT_OUT_NAME.format(number=('_' + re.sub('[^a-zA-Z0-9]', '', url)))
-        html = get_article_by_url(url)
+            # unable to interpret identifier as command; add it as identifier
+            # directly
+            identifiers_to_get.add(identifier)
 
-    text = parse_article(html)
 
-    LOG.info('Going to write output to file {}'.format(out_path))
-    with open(out_path, 'w') as f:
-        f.write(text)
+    # remove articles from known invalid numbers
+    try:
+        invalid = read_known_numbers_from_config(config_path,
+                CONFIG_FILE_SECTION_ARTICLES, CONFIG_FILE_KEY_NONEXISTENT)
+        if invalid.intersection(identifiers_to_get):
+            LOG.info('The following article numbers are probably invalid: {}; '\
+                    'removing them from the query'.format(invalid))
+            identifiers_to_get = identifiers_to_get.difference(invalid)
+    except ValueError as e:
+        LOG.info('Unable to get all information about known/invalid '\
+                'articles from config file: {}'.format(e))
+
+    # if any number is requested...
+    if any(is_number(val) for val in identifiers_to_get):
+        # ... make sure that a login is/was performed
+        if any(el is None for el in session_latest_article):
+            email, password = read_login_info_from_file(config_path, True)
+            session_latest_article = log_in(email, password)
+        # ... and substitute urls through their numbers if possible
+        substitutions = list() # tupes (from, to)
+        for identifier in identifiers_to_get:
+            if not is_number(identifier):
+                url_match = ARTICLE_NUMBER_FROM_URL_RE.match(identifier)
+                if url_match:
+                    number = url_match.group(1)
+                    LOG.debug('Substituting recognized url "{}" through number {}'.format(
+                        identifier, number))
+                    substitutions.append((identifier, number))
+        for substitute in substitutions:
+            identifiers_to_get.remove(substitute[0])
+            identifiers_to_get.add(substitute[1])
+
+    if any(el is None for el in session_latest_article):
+        LOG.error('Unable to log in.')
+
+    # this is what should get fetched
+    LOG.info('Going to get the following identifiers: {}'.format(identifiers_to_get))
+
+    # finally start to get stuff
+    articles, failures = get_many_articles(identifiers_to_get, session_latest_article[0])
+
+    # store articles
+    save_list_of_articles(articles, out_path)
+
+    # store known articles
+    known_numbers = [art.get_article_number() for art in
+            filter(lambda a: a.get_article_number() is not None, articles)
+            ]
+    LOG.info('Storing the following article numbers as known: {}'.format(known_numbers))
+    append_write_known_numbers_to_config(
+            config_path, CONFIG_FILE_SECTION_ARTICLES, CONFIG_FILE_KEY_KNOWN,
+            known_numbers)
+
+    # store the non-existent articles
+    non_existent_numbers = [int(num) for num in filter(is_number, failures)]
+    LOG.info('Storing the following article numbers as non-existent: {}'.format(non_existent_numbers))
+    append_write_known_numbers_to_config(
+            config_path, CONFIG_FILE_SECTION_ARTICLES, CONFIG_FILE_KEY_NONEXISTENT,
+            non_existent_numbers)
