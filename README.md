@@ -1,4 +1,5 @@
 # ebookvoice
+
 Tools to extract plain text from ebooks and read it out loud.
 
 ## zeit_extractor
@@ -11,6 +12,15 @@ Some of the settings (such as whitelist of resorts) are currently hardcoded -- i
 ## mpf_extractor
 
 This tool generates plain text files from the articles of the Max Planck Forschung found under https://bc-v2.pressmatrix.com/de/profiles/b3b32e362f93/editions.
+
+
+## perspective_daily_extractor
+
+Extract plain text versions of the articles on perspective-daily.de.
+
+Either user login information is required or the url of articles shared by other (paying) users.
+
+*Note*: This depends on [requests](http://www.python-requests.org).
 
 
 ## vorleser
