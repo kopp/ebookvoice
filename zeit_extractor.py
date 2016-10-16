@@ -52,6 +52,7 @@ RESORTS_ORDER = [
     'Schweiz',
     'Oesterreich',
     'ZEIT im Osten',
+    'Leo',
     'Kinderzeit',
     'Fussball',
     ]
@@ -70,6 +71,7 @@ RESORTS_BLACKLIST = [
     'Fussball',
     'ZEIT magazin',
     'Feuilleton',
+    'Leo',
         ]
 
 RESORT_BLACKLIST_MATCH_TRESHOLD = 0.8
