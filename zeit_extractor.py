@@ -71,7 +71,7 @@ RESORTS_BLACKLIST = [
     'Fussball',
     'ZEIT magazin',
     'Feuilleton',
-    'Leo',
+    'Leo - ZEIT fuer Kinder',
         ]
 
 RESORT_BLACKLIST_MATCH_TRESHOLD = 0.8
