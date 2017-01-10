@@ -78,6 +78,7 @@ do
             ;;
         (-w|--week)
             week=$2
+            week_padded=$(printf "%02d" $week)
             shift 2
             ;;
         (--year)
@@ -124,14 +125,16 @@ then
     # get file names
     # make sure to find only one file (-quit exits after first found file)
     zip_file_loc=$(find . -name 'DZ_20??-*.zip' -print -quit)
-    week=$(echo $zip_file_loc | sed 's/DZ_20..-\(.*\).zip/\1/')
-    year=$(echo $zip_file_loc | sed 's/DZ_20\(..\)-.*.zip/\1/')
+    week_padded=$(echo $zip_file_loc | sed 's/.*DZ_20..-\(.*\).zip/\1/')
+    # remove trailing zero from zip file week
+    week=$(echo $week_padded | sed 's/0\(.\)/\1/')
+    year=$(echo $zip_file_loc | sed 's/.*DZ_20\(..\)-.*.zip/\1/')
     debug found release to be 20$year - $week
 fi
 
 # get absolute paths
 epub_file=$(readlink -f die_zeit-20${year}-${week}*.epub)
-zip_file=$(readlink -f DZ_20${year}-${week}.zip)
+zip_file=$(readlink -f DZ_20${year}-${week_padded}.zip)
 
 # make sure that the files exist
 if [ ! -f $epub_file ]
@@ -148,7 +151,7 @@ then
 fi
 
 # unzip and downsample mp3s
-audio_dir=zeit_${week}_audio
+audio_dir=zeit_${week_padded}_audio
 mkdir $audio_dir
 pushd $audio_dir
 unzip $zip_file
@@ -156,7 +159,7 @@ find . -name \*.mp3 -exec downsample_mp3 --rate $AUDIO_RATE $AUDIO_QUALITY {} \;
 popd
 
 # extract and read texts
-selfmade_dir=zeit_${week}_selfmade
+selfmade_dir=zeit_${week_padded}_selfmade
 mkdir $selfmade_dir
 pushd $selfmade_dir
 zeit_extractor -k -n -s -b $epub_file
