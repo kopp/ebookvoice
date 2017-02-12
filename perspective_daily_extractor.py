@@ -34,6 +34,10 @@ ARTICLE_RE = [
         re.compile(
             r'<div class="content" ng-show="tab==\'article\'">(.*)<div ng-show="tab==\'discussions\'" class="discussion">',
         flags=re.DOTALL),
+
+        re.compile(
+            r'<div class="content article" ng-show="tab==\'article\'">(.*)(<p class="formobile">.*)?<div class="gift share" ng-show="tab==\'article\'">',
+        flags=re.DOTALL),
         ]
 
 # get article number from url
