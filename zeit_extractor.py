@@ -61,7 +61,6 @@ RESORT_ORDER_MATCH_TRESHOLD = 0.75
 
 # Use this list to define some resorts to skip in any case.
 RESORTS_BLACKLIST = [
-    'Zeit zum Entdecken',
     'Golfen',
     'Hamburg',
     'Schweiz',
@@ -69,7 +68,6 @@ RESORTS_BLACKLIST = [
     'ZEIT im Osten',
     'Kinderzeit',
     'Fussball',
-    'ZEIT magazin',
     'Feuilleton',
     'Leo - ZEIT fuer Kinder',
         ]
