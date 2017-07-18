@@ -308,7 +308,7 @@ def append_write_known_numbers_to_config(filename, sectionname, keyname, numbers
             value = int(num)
             new_numbers.add(value)
         except ValueError as e:
-            print('Ignoring non-numeric value {} from numbers list ({})'.format(num, e))
+            LOG.error('Ignoring non-numeric value {} from numbers list ({})'.format(num, e))
     current_numbers = read_known_numbers_from_config(filename, sectionname, keyname)
     # numbers to write are new numbers and known numbers
     numbers_to_write = current_numbers.union(new_numbers)
@@ -357,6 +357,7 @@ def get_article_by_url(article_url):
     :return str: article in html (from opening to closing div)
     '''
     req = urllib.request.Request(article_url)
+    raise NotImplementedError('Check, whether we want to download a pdf, if so, do not use extract_article_from_html.')
     with urllib.request.urlopen(req) as resp:
         html = resp.read().decode(ENCODING)
         # search for the article text
@@ -367,29 +368,52 @@ def get_article_by_url(article_url):
             raise ValueError('Unable to find the article on page {}'.format(article_url))
 
 
-def get_article_by_number(article_number, session):
+def get_article_by_number(article_number, session, use_pdf):
     '''
     Download content of the given article number.
     :param article_number int: Number to download
     :param session requests.Session: session that is correctly logged on
-    :return str: article in html (from opening to closing div) or GET-reply
-        that evalutes to False if unable to get that article
+    :param use_pdf bool: if True, fetch the pdf version, otherwise use html
+    :return str|bytes|requests.Response: if it was possible to fetch the
+        article: content in html (from opening to closing div) or content of
+        the pdf in bytes; if unable to fetch it, GET-reply that evalutes to
+        False.
     '''
     url = '{}/article/{}'.format(BASE_URL, article_number)
+    # in both cases (html, pdf), access the html article
     article = session.get(url)
     if not article:
-        LOG.warn('Unable to download article number {}'.format(article_number))
+        LOG.warn('Unable to download article number {} at {}'.format(article_number, url))
         return article
     else:
         LOG.debug('Successfully accessed article no {} at {}: {}'.format(article_number, url, article))
         #LOG.debug('Article text: {}'.format(article.text))
-        return extract_article_from_html(article.text)
+        if use_pdf:
+            # for the pdf we need the redirected url (which contains some magic
+            # code after the article number) ...
+            redirect_url = article.url
+            # ... where we can append `/pdf`
+            pdf_url = redirect_url + '/pdf'
+            # and now we can access the data
+            pdf_response = session.get(pdf_url)
+            if not pdf_response:
+                LOG.warn('Unable to download pdf article for number {} at {}'.format(article_number, pdf_url))
+                return pdf_response
+            else:
+                LOG.debug('Successfully accessed pdf of article no {} at {}'.format(article_number, pdf_url))
+                # article is complete pdf
+                return pdf_response.content
+        else: # html
+            # article is only part of the html -- extract that
+            return extract_article_from_html(article.text)
 
 
 
 class Article:
     '''
     Simple struct to hold article text
+    :param identifier: (hopefully) unique identifier for this article.
+    :param text: unparsed content of the article (may be binary pdf or html)
     '''
     def __init__(self, identifier, text=None):
         self._identifier = identifier
@@ -404,7 +428,7 @@ class Article:
 
     def get_text(self):
         '''
-        Return text as plain text.
+        Return text as plain text (i.e. not parsed).
         '''
         return self._text
 
@@ -418,25 +442,42 @@ class Article:
         except ValueError:
             return None
 
+    def is_pdf(self):
+        '''
+        Return whether the stored content is in pdf format.
+        '''
+        raise NotImplementedError('check for bytes')
+
+    def is_html(self):
+        '''
+        Return whether the stored content is in pdf format.
+        '''
+        raise NotImplementedError('check for text')
+
     def get_article_as_plain_text(self):
         '''
         Parse article content.
         Assumes that self._text is article text in html from opening to closing div
         :return str: article in plain text
         '''
-        #import xml.etree.ElementTree as ET
-        #xml = '<article>' + article + '</article>' # this would be necessary to add add a top level tag as required by xml
-        #root = ET.fromstring(xml) # this does not work because the stuff from the website is malformed
-        parser = PerspectiveDailyArticleParser()
-        parser.feed(self._text)
-        return parser.get_text()
+        if self.is_html():
+            #import xml.etree.ElementTree as ET
+            #xml = '<article>' + article + '</article>' # this would be necessary to add add a top level tag as required by xml
+            #root = ET.fromstring(xml) # this does not work because the stuff from the website is malformed
+            parser = PerspectiveDailyArticleParser()
+            parser.feed(self._text)
+            return parser.get_text()
+        elif self.is_pdf():
+            raise NotImplementedError('parse using pdftotext, then apply heyristics to filter out unwanted stuff...')
 
 
 
-def get_many_articles(numbers_or_urls, session):
+def get_many_articles(numbers_or_urls, session, use_pdf):
     '''
     Try to access a list of articles referenced either by url or by number.
     :param numbers_or_urls iterable<str|convertible-to-int>: elements to download
+    :param use_pdf bool: Whether to download the pdf of an article (otherwise,
+        download the html).
     :return (list<Article>, list<identifier>): Each article is returned as
         Article object.  Its identifier is set to the article number.  If
         unable to get a number for the article, some other identifier (e.g.
@@ -446,13 +487,13 @@ def get_many_articles(numbers_or_urls, session):
     articles = list()
     failures = list()
     for identifier in numbers_or_urls:
-        html = None
+        content = None
         unique_identifier = None # may be number or derived from url
         if is_number(identifier):
             number = int(identifier)
-            html = get_article_by_number(number, session)
+            content = get_article_by_number(number, session, use_pdf)
         else:
-            html = get_article_by_url(url)
+            content = get_article_by_url(url)
             # get unique_identifier
             url_match = ARTICLE_NUMBER_FROM_URL_RE.match(url)
             if url_match:
@@ -460,11 +501,11 @@ def get_many_articles(numbers_or_urls, session):
             else:
                 unique_identifier = 'url_' + re.sub('[^a-zA-Z0-9]', '', url)
         # sort outcome of operation depending on success/failure
-        if not html:
-            LOG.warning('Unable to get article {} due to {}'.format(identifier, html))
+        if not content:
+            LOG.warning('Unable to get article {} due to {}'.format(identifier, content))
             failures.append(identifier)
         else:
-            articles.append(Article(identifier, html))
+            articles.append(Article(identifier, content))
     # return what was fetched
     return articles, failures
 
@@ -631,6 +672,9 @@ if __name__ == '__main__':
     parser.add_argument('--config', type=str, metavar='path_to_config_file',
             default='~/.perspective_daily.ini',
             help='alternative path to the configuration file')
+    parser.add_argument('--use-html', action='store_const', dest='use_pdf',
+            const=False, default=True,
+            help='Extract the article from html (default is to extract from pdf).')
 
     args = parser.parse_args()
 
@@ -738,7 +782,7 @@ if __name__ == '__main__':
     LOG.info('Going to get the following identifiers: {}'.format(identifiers_to_get))
 
     # finally start to get stuff
-    articles, failures = get_many_articles(identifiers_to_get, session_latest_article[0])
+    articles, failures = get_many_articles(identifiers_to_get, session_latest_article[0], args.use_pdf)
 
     # store articles
     save_list_of_articles(articles, out_path)
