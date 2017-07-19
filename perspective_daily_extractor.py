@@ -13,6 +13,7 @@ import argparse
 import requests # TODO: use requests instead of urllib
 import configparser # read login info from file
 import os.path # exists, expanduser
+import subprocess # call external tool pdftotext
 
 from enum import Enum
 
@@ -418,6 +419,57 @@ def get_article_by_number(article_number, session, article_format):
             raise NotImplementedError('format {} not implemented in get_article_by_number'.format(article_format))
 
 
+def filter_raw_pdf_text(pdf_text):
+    '''
+    Filter the raw output of the text extraction.
+    This removes things like '#1'
+    '''
+    return pdf_text
+
+
+def extract_text_from_pdf(pdf_content):
+    '''
+    Extract the article content from the pdf.
+    :param pdf_content bytes: pdf as bytes stream.
+    :return string: (long) string with article content.
+    '''
+    # TODO: check, that pdftotext is available
+    # these parameters are found by experimenting with gv and the
+    # appropriate command line
+    # Note: The coordinate system starts at the top left corner, x
+    #       is to the right, y goes down -- so y is handled
+    #       differently in gv.
+    x_param = '-x 70 -W 500'
+    y_param = { True    : '-y 110 -H 595', # first page
+                False   : '-y 80 -H 660', # rest
+                }
+    pg_param = { True   : '-f 1 -l 1', # first page
+                 False  : '-f 2',
+                 }
+    def _make_args(first_page):
+        '''
+        Generate process call with arguments as list of strings.
+        :param first_page bool: True for first page, False otherwise
+        '''
+        return 'pdftotext -nopgbrk -layout {pg} {x} {y} - -'.format(
+                pg=pg_param[first_page], x=x_param, y=y_param[first_page]
+                ).split()
+
+    def _extract(first_page):
+        '''Extract text from pdf.'''
+        extractor = subprocess.Popen(_make_args(first_page),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        out, err = extractor.communicate(input=pdf_content)
+        # TODO: check err
+        return out
+
+    out_bytes = _extract(True) + _extract(False)
+    out_text = out_bytes.decode('utf-8') # pdftotext returns utf-8 encoded text
+
+    print('Extracted {}'.format(out_text))
+    return filter_raw_pdf_text(out_text)
+
+
 
 class Article:
     '''
@@ -468,7 +520,7 @@ class Article:
             parser.feed(self._text)
             return parser.get_text()
         elif self._format is ArticleFormat.PDF:
-            raise NotImplementedError('parse using pdftotext, then apply heyristics to filter out unwanted stuff...')
+            return extract_text_from_pdf(self._text)
         else:
             raise NotImplementedError('It seems like the content is neither in html nor in pdf format; the new format {} not yet implemented.'.format(self._format))
 
