@@ -14,6 +14,8 @@ import requests # TODO: use requests instead of urllib
 import configparser # read login info from file
 import os.path # exists, expanduser
 
+from enum import Enum
+
 # setup logger
 import logging
 import sys
@@ -81,6 +83,12 @@ COMMANDS = {
         }
 
 COMMAND_RANGE_RE = re.compile('^([0-9]+)-([0-9]+)$')
+
+
+class ArticleFormat(Enum):
+    '''enum specifying the type of article used'''
+    HTML = 1
+    PDF = 2
 
 
 class TagMatcher:
@@ -368,12 +376,12 @@ def get_article_by_url(article_url):
             raise ValueError('Unable to find the article on page {}'.format(article_url))
 
 
-def get_article_by_number(article_number, session, use_pdf):
+def get_article_by_number(article_number, session, article_format):
     '''
     Download content of the given article number.
     :param article_number int: Number to download
     :param session requests.Session: session that is correctly logged on
-    :param use_pdf bool: if True, fetch the pdf version, otherwise use html
+    :param article_format ArticleFormat: select the format to get
     :return str|bytes|requests.Response: if it was possible to fetch the
         article: content in html (from opening to closing div) or content of
         the pdf in bytes; if unable to fetch it, GET-reply that evalutes to
@@ -388,7 +396,7 @@ def get_article_by_number(article_number, session, use_pdf):
     else:
         LOG.debug('Successfully accessed article no {} at {}: {}'.format(article_number, url, article))
         #LOG.debug('Article text: {}'.format(article.text))
-        if use_pdf:
+        if article_format is ArticleFormat.PDF:
             # for the pdf we need the redirected url (which contains some magic
             # code after the article number) ...
             redirect_url = article.url
@@ -403,9 +411,11 @@ def get_article_by_number(article_number, session, use_pdf):
                 LOG.debug('Successfully accessed pdf of article no {} at {}'.format(article_number, pdf_url))
                 # article is complete pdf
                 return pdf_response.content
-        else: # html
+        elif article_format is ArticleFormat.HTML:
             # article is only part of the html -- extract that
             return extract_article_from_html(article.text)
+        else:
+            raise NotImplementedError('format {} not implemented in get_article_by_number'.format(article_format))
 
 
 
@@ -414,10 +424,12 @@ class Article:
     Simple struct to hold article text
     :param identifier: (hopefully) unique identifier for this article.
     :param text: unparsed content of the article (may be binary pdf or html)
+    :param article_format ArticleFormat: Format of the article
     '''
-    def __init__(self, identifier, text=None):
+    def __init__(self, identifier, text=None, article_format=None):
         self._identifier = identifier
         self._text = text
+        self._format = article_format
 
     def get_identifier(self):
         return self._identifier
@@ -442,42 +454,31 @@ class Article:
         except ValueError:
             return None
 
-    def is_pdf(self):
-        '''
-        Return whether the stored content is in pdf format.
-        '''
-        raise NotImplementedError('check for bytes')
-
-    def is_html(self):
-        '''
-        Return whether the stored content is in pdf format.
-        '''
-        raise NotImplementedError('check for text')
-
     def get_article_as_plain_text(self):
         '''
         Parse article content.
         Assumes that self._text is article text in html from opening to closing div
         :return str: article in plain text
         '''
-        if self.is_html():
+        if self._format is ArticleFormat.HTML:
             #import xml.etree.ElementTree as ET
             #xml = '<article>' + article + '</article>' # this would be necessary to add add a top level tag as required by xml
             #root = ET.fromstring(xml) # this does not work because the stuff from the website is malformed
             parser = PerspectiveDailyArticleParser()
             parser.feed(self._text)
             return parser.get_text()
-        elif self.is_pdf():
+        elif self._format is ArticleFormat.PDF:
             raise NotImplementedError('parse using pdftotext, then apply heyristics to filter out unwanted stuff...')
+        else:
+            raise NotImplementedError('It seems like the content is neither in html nor in pdf format; the new format {} not yet implemented.'.format(self._format))
 
 
 
-def get_many_articles(numbers_or_urls, session, use_pdf):
+def get_many_articles(numbers_or_urls, session, article_format):
     '''
     Try to access a list of articles referenced either by url or by number.
     :param numbers_or_urls iterable<str|convertible-to-int>: elements to download
-    :param use_pdf bool: Whether to download the pdf of an article (otherwise,
-        download the html).
+    :param article_format ArticleFormat: Format in which to download the article.
     :return (list<Article>, list<identifier>): Each article is returned as
         Article object.  Its identifier is set to the article number.  If
         unable to get a number for the article, some other identifier (e.g.
@@ -491,7 +492,7 @@ def get_many_articles(numbers_or_urls, session, use_pdf):
         unique_identifier = None # may be number or derived from url
         if is_number(identifier):
             number = int(identifier)
-            content = get_article_by_number(number, session, use_pdf)
+            content = get_article_by_number(number, session, article_format)
         else:
             content = get_article_by_url(url)
             # get unique_identifier
@@ -505,7 +506,7 @@ def get_many_articles(numbers_or_urls, session, use_pdf):
             LOG.warning('Unable to get article {} due to {}'.format(identifier, content))
             failures.append(identifier)
         else:
-            articles.append(Article(identifier, content))
+            articles.append(Article(identifier, content, article_format))
     # return what was fetched
     return articles, failures
 
@@ -672,8 +673,8 @@ if __name__ == '__main__':
     parser.add_argument('--config', type=str, metavar='path_to_config_file',
             default='~/.perspective_daily.ini',
             help='alternative path to the configuration file')
-    parser.add_argument('--use-html', action='store_const', dest='use_pdf',
-            const=False, default=True,
+    parser.add_argument('--use-html', action='store_const', dest='article_format',
+            const=ArticleFormat.HTML, default=ArticleFormat.PDF,
             help='Extract the article from html (default is to extract from pdf).')
 
     args = parser.parse_args()
@@ -782,7 +783,7 @@ if __name__ == '__main__':
     LOG.info('Going to get the following identifiers: {}'.format(identifiers_to_get))
 
     # finally start to get stuff
-    articles, failures = get_many_articles(identifiers_to_get, session_latest_article[0], args.use_pdf)
+    articles, failures = get_many_articles(identifiers_to_get, session_latest_article[0], args.article_format)
 
     # store articles
     save_list_of_articles(articles, out_path)
