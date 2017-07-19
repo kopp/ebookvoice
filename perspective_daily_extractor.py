@@ -43,6 +43,12 @@ ARTICLE_RE = [
         flags=re.DOTALL),
         ]
 
+## pdf
+# footnote: some spaces, then # or *, the a number, then a newline and again some spaces.
+FOOTNOTE_RE = re.compile(' +(#|\*)[0-9]+\n *')
+# fint the end of a pdf that contains additional information
+ADD_INFO_RE = re.compile('\nZusätzliche Informationen\n.*', re.DOTALL)
+
 # get article number from url
 ARTICLE_NUMBER_FROM_URL_RE = re.compile(r'.*perspective-daily.de/article/([0-9]+).*')
 
@@ -422,8 +428,13 @@ def get_article_by_number(article_number, session, article_format):
 def filter_raw_pdf_text(pdf_text):
     '''
     Filter the raw output of the text extraction.
-    This removes things like '#1'
+    This removes things like footnotes and additional information from the end
+    of the article.
     '''
+    # filter footnote marks from text
+    pdf_text = FOOTNOTE_RE.sub(' ', pdf_text)
+    # remove additional information at the end of the article.
+    pdf_text = ADD_INFO_RE.sub('', pdf_text)
     return pdf_text
 
 
@@ -433,7 +444,6 @@ def extract_text_from_pdf(pdf_content):
     :param pdf_content bytes: pdf as bytes stream.
     :return string: (long) string with article content.
     '''
-    # TODO: check, that pdftotext is available
     # these parameters are found by experimenting with gv and the
     # appropriate command line
     # Note: The coordinate system starts at the top left corner, x
@@ -456,17 +466,19 @@ def extract_text_from_pdf(pdf_content):
                 ).split()
 
     def _extract(first_page):
-        '''Extract text from pdf.'''
+        '''Extract text from pdf.
+        :raise FileNotFoundError: if tool is not installed
+        '''
         extractor = subprocess.Popen(_make_args(first_page),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         out, err = extractor.communicate(input=pdf_content)
-        # TODO: check err
+        if err:
+            LOG.error('error returned by conversion tool: {}'.format(err))
         return out
 
     out_bytes = _extract(True) + _extract(False)
     out_text = out_bytes.decode('utf-8') # pdftotext returns utf-8 encoded text
 
-    print('Extracted {}'.format(out_text))
     return filter_raw_pdf_text(out_text)
 
 
