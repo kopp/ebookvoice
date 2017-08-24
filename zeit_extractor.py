@@ -1,5 +1,8 @@
 #!/usr/bin/python
 
+# TODO: In Zeit 30 2017, extraction worked, from 31 on, it failed: unable to find title in
+#           title = root.find('.//html:div[@class="article_titles"]/html:h1[@class="title"]', namespaces).text
+
 '''
 Extract articles from Die Zeit epub, store them as plain text, one article per file.
 Optionally sort the articles by resort by prefixing them with a running number.
