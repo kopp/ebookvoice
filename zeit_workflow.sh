@@ -115,7 +115,7 @@ fi
 if [ $week = _TO_BE_DETERMINED_ ]
 then
     # check if files exist
-    if ! ls DZ_20??-*.zip die_zeit-20??-*.epub >/dev/null 2>/dev/null
+    if ! ls DZ_20??-*.zip die_zeit?20??-*.epub >/dev/null 2>/dev/null
     then
         echo Error: Unable to determine year/week number from files
         usage
@@ -133,7 +133,7 @@ then
 fi
 
 # get absolute paths
-epub_file=$(readlink -f die_zeit-20${year}-${week}*.epub)
+epub_file=$(readlink -f die_zeit?20${year}?${week}*.epub)
 zip_file=$(readlink -f DZ_20${year}-${week_padded}.zip)
 
 # make sure that the files exist
