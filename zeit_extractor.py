@@ -119,45 +119,44 @@ class Article():
         namespaces = {'html': 'http://www.w3.org/1999/xhtml'}
 
         # title
-        title = root.find('.//html:div[@class="article_titles"]/html:h1[@class="title"]', namespaces).text
+        title = root.find('.//html:div[@class="article_titles"]/html:h1[@class="title"]', namespaces)
         if title:
-            self._title = title
+            self._title = title.text
         else:
             # search for a supertitle
-            supertitle = root.find('.//html:div[@class="article_titles"]/html:h3[@class="supertitle"]', namespaces).text
+            supertitle = root.find('.//html:div[@class="article_titles"]/html:h3[@class="supertitle"]', namespaces)
             if supertitle:
                 logging.debug('Using supertitle as title in file {}'.format(xhtml_file_name))
-                self._title = supertitle
+                self._title = supertitle.text
             else:
                 # search for a subheadline
-                try:
-                    subheadline = root.find('.//html:div[@class="article_text"]//html:div[@class="subheadline-1 "]', namespaces).text
-                    if subheadline:
-                        logging.debug('Using subheadline as title in file {}'.format(xhtml_file_name))
-                        self._title = subheadline
-                except AttributeError:
-                    logging.info('File {} has neither title, nor supertitle nor subheadline.'.format(xhtml_file_name))
+                subheadline = root.find('.//html:div[@class="article_text"]//html:div[@class="subheadline-1 "]', namespaces)
+                if subheadline:
+                    logging.debug('Using subheadline as title in file {}'.format(xhtml_file_name))
+                    self._title = subheadline.text
+                else:
                     self._title = Article.DEFAULT_TITLE
+                    logging.info('File {} has neither title, nor supertitle nor subheadline, using default title "{}"'.format(xhtml_file_name, self._title))
 
         # subtitle
-        subtitle = root.find('.//html:div[@class="article_titles"]/html:h3[@class="subtitle"]', namespaces).text
-        if subtitle is None:
-            self._subtitle = ''
-            logging.debug('Article in file {} does not have a subtitle.'.format(
-                xhtml_file_name))
-        else:
-            self._subtitle = subtitle.strip()
+        subtitle = root.find('.//html:div[@class="article_titles"]/html:h3[@class="subtitle"]', namespaces)
+        if subtitle:
+            self._subtitle = subtitle.text.strip()
             # force trailing period
             if not subtitle[-1] in ['.', '?', '!']:
                 self._subtitle += '.'
+        else:
+            self._subtitle = ''
+            logging.debug('Article in file {} does not have a subtitle.'.format(
+                xhtml_file_name))
 
         # author
-        try:
-            author = root.find('.//html:div[@class="article_titles"]/html:span[@class="author"]', namespaces).text
-        except AttributeError: # NoneType
+        author = root.find('.//html:div[@class="article_titles"]/html:span[@class="author"]', namespaces)
+        if author:
+            self._author = ' '.join(map(Article._capitalize_names, author.text.lower().split(' ')))
+        else:
             logging.debug('Article in file {} does not have an author.'.format(xhtml_file_name))
             author = ''
-        self._author = ' '.join(map(Article._capitalize_names, author.lower().split(' ')))
 
         # resort
         for link in root.findall('.//html:div[@class="article_navigation"]//html:span[@class="link"]', namespaces):
