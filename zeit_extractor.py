@@ -105,6 +105,7 @@ class Article():
 
     def parse(self, xhtml_file_name):
         '''Parse one article from one xhtml file.'''
+        logging.debug('Processing file {}'.format(xhtml_file_name))
         tree = ET.parse(xhtml_file_name)
         root = tree.getroot()
 
@@ -120,18 +121,18 @@ class Article():
 
         # title
         title = root.find('.//html:div[@class="article_titles"]/html:h1[@class="title"]', namespaces)
-        if title:
+        if title is not None and title.text is not None:
             self._title = title.text
         else:
             # search for a supertitle
             supertitle = root.find('.//html:div[@class="article_titles"]/html:h3[@class="supertitle"]', namespaces)
-            if supertitle:
+            if supertitle is not None and supertitle.text is not None:
                 logging.debug('Using supertitle as title in file {}'.format(xhtml_file_name))
                 self._title = supertitle.text
             else:
                 # search for a subheadline
                 subheadline = root.find('.//html:div[@class="article_text"]//html:div[@class="subheadline-1 "]', namespaces)
-                if subheadline:
+                if subheadline is not None and subheadline.text is not None:
                     logging.debug('Using subheadline as title in file {}'.format(xhtml_file_name))
                     self._title = subheadline.text
                 else:
@@ -140,10 +141,10 @@ class Article():
 
         # subtitle
         subtitle = root.find('.//html:div[@class="article_titles"]/html:h3[@class="subtitle"]', namespaces)
-        if subtitle:
+        if subtitle is not None and subtitle.text is not None:
             self._subtitle = subtitle.text.strip()
             # force trailing period
-            if not subtitle[-1] in ['.', '?', '!']:
+            if not self._subtitle[-1] in ['.', '?', '!']:
                 self._subtitle += '.'
         else:
             self._subtitle = ''
@@ -152,7 +153,7 @@ class Article():
 
         # author
         author = root.find('.//html:div[@class="article_titles"]/html:span[@class="author"]', namespaces)
-        if author:
+        if author is not None and author.text is not None:
             self._author = ' '.join(map(Article._capitalize_names, author.text.lower().split(' ')))
         else:
             logging.debug('Article in file {} does not have an author.'.format(xhtml_file_name))
@@ -174,7 +175,7 @@ class Article():
 
         # has audio
         audio = root.find('.//html:div[@class="article_text"]//html:a[@class="audio_link_box"]', namespaces)
-        if audio:
+        if audio is not None:
             # check that link is an audio link
             target = audio.attrib['href']
             description = audio.find('./html:span', namespaces).text
