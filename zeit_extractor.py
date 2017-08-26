@@ -166,8 +166,13 @@ class Article():
             if author is not None and author.text is not None:
                 author_text = author.text
             else:
-                logging.debug('Article in file {} does not have an author.'.format(xhtml_file_name))
                 author_text = ''
+                # sometimes, the author is hidden in the subtitle (in capital case)
+                if self._subtitle:
+                    name = re.findall('([A-Z]{2,})', self._subtitle)
+                    author_text = ' '.join(name)
+        if not author_text: # unable to find an author
+            logging.debug('Article in file {} does not have an author.'.format(xhtml_file_name))
         self._author = ' '.join(map(Article._capitalize_names, author_text.lower().split(' ')))
 
         # resort
