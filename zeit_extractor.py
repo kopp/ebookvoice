@@ -473,6 +473,9 @@ def parse_arguments_and_execute():
     parser.add_argument('-b', '--blacklist', action='store_const', const=True,
             default=False, dest='do_blacklist',
             help='Remove artivles that are in the (hard coded) black list.')
+    parser.add_argument('--debug', action='store_const', dest='log_level',
+            const=logging.DEBUG, default=logging.INFO,
+            help='enable debug output')
     args = parser.parse_args()
 
     epub = args.zeit_epub[0]
@@ -482,7 +485,11 @@ def parse_arguments_and_execute():
     number_output = args.number_output
     spell_numbers = args.spell_numbers
     do_blacklist = args.do_blacklist
+    log_level = args.log_level
 
+    # set log level as one of the first things so that everything can use the
+    # logger properly
+    logging.basicConfig(level=log_level)
 
     if not os.path.isdir(outdir):
         # create it
@@ -571,6 +578,7 @@ ERR_WRITE_PERM = 5
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
     parse_arguments_and_execute()
     raise SystemExit(ERR_NOERROR)
+else:
+    logging.basicConfig(level=logging.INFO)
