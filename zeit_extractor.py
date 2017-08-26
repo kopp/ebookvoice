@@ -114,10 +114,15 @@ class Article():
         # namespace-url, e.g.
         #   root.findall('.//{http://www.w3.org/1999/xhtml}div')
         # findall accepts a second argument, which is a dictionary with
-        # namespace shorthands.
+        # namespaces shorthands.
         # This is actually documented in the element tree api, see
         # https://docs.python.org/2/library/xml.etree.elementtree.html#parsing-xml-with-namespaces
         namespaces = {'html': 'http://www.w3.org/1999/xhtml'}
+
+        # Note: When checking whether a find() call found something, you _need_
+        #       to compare the result to None.  Findings that have no children
+        #       evaluate to False.  See
+        #       https://stackoverflow.com/questions/20129996
 
         # title
         title = root.find('.//html:div[@class="article_titles"]/html:h1[@class="title"]', namespaces)
@@ -153,11 +158,17 @@ class Article():
 
         # author
         author = root.find('.//html:div[@class="article_titles"]/html:span[@class="author"]', namespaces)
+        author_text = None # will be converted later
         if author is not None and author.text is not None:
-            self._author = ' '.join(map(Article._capitalize_names, author.text.lower().split(' ')))
+            author_text = author.text
         else:
-            logging.debug('Article in file {} does not have an author.'.format(xhtml_file_name))
-            author = ''
+            author = root.find('.//html:div[@class="article_text"]/html:div[@class="group"]/html:div[@class="additional-content"]/html:div[@class="x-zeit-box"]/html:p[@class="paragraph style-3"]', namespaces)
+            if author is not None and author.text is not None:
+                author_text = author.text
+            else:
+                logging.debug('Article in file {} does not have an author.'.format(xhtml_file_name))
+                author_text = ''
+        self._author = ' '.join(map(Article._capitalize_names, author_text.lower().split(' ')))
 
         # resort
         for link in root.findall('.//html:div[@class="article_navigation"]//html:span[@class="link"]', namespaces):
