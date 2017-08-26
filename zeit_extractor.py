@@ -141,8 +141,14 @@ class Article():
                     logging.debug('Using subheadline as title in file {}'.format(xhtml_file_name))
                     self._title = subheadline.text
                 else:
-                    self._title = Article.DEFAULT_TITLE
-                    logging.info('File {} has neither title, nor supertitle nor subheadline, using default title "{}"'.format(xhtml_file_name, self._title))
+                    # look for <title> in <head>
+                    title_head = root.find('.//html:head/html:title', namespaces)
+                    if title_head is not None and title_head.text is not None:
+                        logging.debug('Using title from head as title in file {}'.format(xhtml_file_name))
+                        self._title = title_head.text
+                    else:
+                        self._title = Article.DEFAULT_TITLE
+                        logging.info('File {} has neither title, nor supertitle nor subheadline, using default title "{}"'.format(xhtml_file_name, self._title))
 
         # subtitle
         subtitle = root.find('.//html:div[@class="article_titles"]/html:h3[@class="subtitle"]', namespaces)
