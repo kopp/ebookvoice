@@ -24,6 +24,8 @@ Usage:
 Options:
     --profile <profile>     Use a bunch of pre-configured settings (profile).
     --list-profiles         List all known profiles.
+    --no-audio              Do not process audio files, just process text
+                            (requires --week).
     -w --week <week>        Look for input files for the given week number
                             (by default determine the number from found files).
     --year <year>           Look for input files for given year -- only use
@@ -49,6 +51,11 @@ profile=_NO_PROFILE_
 week=_TO_BE_DETERMINED_
 # last two digits of the year -- defaults to current year
 year=$(date +%y)
+# whether to process audio
+do_process_audio=true
+# whether to process text
+do_process_text=true
+
 
 # parse command line options
 while [ -n "$1" ]
@@ -76,6 +83,16 @@ do
             esac
 
             ;;
+        (--list-profiles)
+            echo "profile       description"
+            echo "quality       slightly higher quality (bitrate) with larger size"
+            shift 1
+            exit 0
+            ;;
+        (--no-audio)
+	    do_process_audio=false
+	    shift 1
+	    ;;
         (-w|--week)
             week=$2
             week_padded=$(printf "%02d" $week)
@@ -84,12 +101,6 @@ do
         (--year)
             year=$2
             shift 2
-            ;;
-        (--list-profiles)
-            echo "profile       description"
-            echo "quality       slightly higher quality (bitrate) with larger size"
-            shift 1
-            exit 0
             ;;
         (*)
             echo Error: Unknown option $1
@@ -115,7 +126,7 @@ fi
 if [ $week = _TO_BE_DETERMINED_ ]
 then
     # check if files exist
-    if ! ls DZ_20??-*.zip die_zeit?20??-*.epub >/dev/null 2>/dev/null
+    if ! ls DZ_20??-*.zip >/dev/null 2>/dev/null
     then
         echo Error: Unable to determine year/week number from files
         usage
@@ -132,39 +143,54 @@ then
     debug found release to be 20$year - $week
 fi
 
-# get absolute paths
-epub_file=$(readlink -f die_zeit?20${year}?${week}*.epub)
-zip_file=$(readlink -f DZ_20${year}-${week_padded}.zip)
 
-# make sure that the files exist
-if [ ! -f $epub_file ]
+## audio processing
+if $do_process_audio
 then
-    echo Error: missing epub input file $epub_file
-    usage
-    exit $EXIT_MISSING_INPUT_FILE
+    # get absolute path
+    zip_file=$(readlink -f DZ_20${year}-${week_padded}.zip)
+
+    # make sure that the file exist
+    if [ ! -f $zip_file ]
+    then
+        echo Error: missing zip input file $epub_file
+        usage
+        exit $EXIT_MISSING_INPUT_FILE
+    fi
+
+    # unzip and downsample mp3s
+    audio_dir=zeit_${week_padded}_audio
+    mkdir $audio_dir
+    pushd $audio_dir
+    unzip $zip_file
+    find . -name \*.mp3 -exec downsample_mp3 --rate $AUDIO_RATE $AUDIO_QUALITY {} \;
+    popd
 fi
-if [ ! -f $zip_file ]
+
+
+## text processing
+if $do_process_text
 then
-    echo Error: missing zip input file $epub_file
-    usage
-    exit $EXIT_MISSING_INPUT_FILE
+    # get absolute paths
+    epub_file=$(readlink -f die_zeit?20${year}?${week}*.epub)
+
+    # make sure that the files exist
+    if [ ! -f $epub_file ]
+    then
+        echo Error: missing epub input file $epub_file
+        usage
+        exit $EXIT_MISSING_INPUT_FILE
+    fi
+
+
+    # extract and read texts
+    selfmade_dir=zeit_${week_padded}_selfmade
+    mkdir $selfmade_dir
+    pushd $selfmade_dir
+    zeit_extractor -k -n -s -b $epub_file
+    find . -name \*.txt -exec vorleser --rate $VORLESER_RATE $VORLESER_QUALITY {} \;
+    popd
 fi
-
-# unzip and downsample mp3s
-audio_dir=zeit_${week_padded}_audio
-mkdir $audio_dir
-pushd $audio_dir
-unzip $zip_file
-find . -name \*.mp3 -exec downsample_mp3 --rate $AUDIO_RATE $AUDIO_QUALITY {} \;
-popd
-
-# extract and read texts
-selfmade_dir=zeit_${week_padded}_selfmade
-mkdir $selfmade_dir
-pushd $selfmade_dir
-zeit_extractor -k -n -s -b $epub_file
-find . -name \*.txt -exec vorleser --rate $VORLESER_RATE $VORLESER_QUALITY {} \;
-popd
 
 
 echo Done.  Used folders $audio_dir and $selfmade_dir
