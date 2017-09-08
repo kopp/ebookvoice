@@ -186,6 +186,20 @@ class Article():
                 self._resort = match.group(1)
 
         # content
+        # TODO: There are short sentences, that are quoted from later parts of
+        #       the text, in a
+        #           div[@class="additional-content"]/div[@class="x-zeit-box"]
+        #       Unfortunately, the same xml markup is used for other parts of
+        #       the text that might be important and they are not marked
+        #       specially.
+        #       Something like
+        #           './/html:div[@class="article_text"]//html:p[not(ancestor::html:div[@class="x-zeit-box"])]
+        #       would be nice to limit the search to p's that are not part of
+        #       the x-zeit-box (see
+        #       https://www.w3schools.com/xml/xpath_axes.asp and
+        #       https://stackoverflow.com/questions/17191971) but this does not
+        #       seem to be supported by ElementTree
+        #           SyntaxError: prefix 'ancestor' not found in prefix map
         self._content = list()
         for paragraph in root.findall('.//html:div[@class="article_text"]//html:p', namespaces):
             text = ''.join(paragraph.itertext())
