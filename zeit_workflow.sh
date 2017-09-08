@@ -2,9 +2,9 @@
 
 
 # parameter
-AUDIO_RATE=2.0      # speedup factor
+AUDIO_RATE=2.2      # speedup factor
 VORLESER_RATE=10    # arbitr units of vorleser
-AUDIO_QUALITY=""    # defaults to empty; otherwise set to --bitrate <value>
+AUDIO_QUALITY=""    # defaults to empty; otherwise set to --quality <value>
 VORLESER_QUALITY="" # defaults to empty; otherwise set to --format <format>
 
 # exit codes
@@ -26,6 +26,7 @@ Options:
     --list-profiles         List all known profiles.
     --no-audio              Do not process audio files, just process text
                             (requires --week).
+    --no-text               Do not process text files, just process audio.
     -w --week <week>        Look for input files for the given week number
                             (by default determine the number from found files).
     --year <year>           Look for input files for given year -- only use
@@ -72,7 +73,7 @@ do
             # directly interpret profiles so that other options may overwrite the profile choices
             case "$profile" in
                 (quality)
-                    AUDIO_QUALITY="--bitrate 96"
+                    AUDIO_QUALITY="--quality 2"
                     VORLESER_QUALITY="--format 32khz_16bit_mono"
                     ;;
                 (*)
@@ -90,9 +91,13 @@ do
             exit 0
             ;;
         (--no-audio)
-	    do_process_audio=false
-	    shift 1
-	    ;;
+            do_process_audio=false
+            shift 1
+            ;;
+        (--no-text)
+            do_process_text=false
+            shift 1
+            ;;
         (-w|--week)
             week=$2
             week_padded=$(printf "%02d" $week)

@@ -2,12 +2,12 @@
 
 # downsample mp3 file given on cmdline
 
-
 # default values
-in=""
-rate=""
-bitrate=32
-overwrite=true # whether to overwrite the input with the output
+in=""               # path to input file
+outfile=_OVERWRITE_ # path to output file
+rate=""             # speedup factor
+quality=2           # 0 (best) to 9 (worst)
+overwrite=true      # whether to overwrite the input with the output
 
 # exit codes
 EXIT_SUCCESS=0
@@ -28,8 +28,10 @@ Downsampled file has same name as input file.
 Options:
     -k, --keep      Do not overwrite the input file, output in temp file
                     (default: do overwrite)
-    --rate          Slow down/speed up audio; in [0.5 : 4.0] (default: nothing)
-    --bitrate       Set bitrage in kb/s (default: $bitrate)
+    --outfile val   Path to the output file (default: overwrite input)
+    --rate val      Slow down/speed up audio; in [0.5 : 4.0] (default: nothing)
+    --quality val   Set quality to use; see
+                    https://trac.ffmpeg.org/wiki/Encode/MP3 (default: $quality).
 EOF
 }
 
@@ -48,8 +50,12 @@ do
             rate=$2
             shift 2
             ;;
-        (--bitrate)
-            bitrate=$2
+        (--quality)
+            quality=$2
+            shift 2
+            ;;
+        (--outfile)
+            outfile=$2
             shift 2
             ;;
         (*) # other arguments are input file
@@ -80,7 +86,13 @@ else
     fi
 fi
 
-out=$(mktemp --dry-run --suffix=.mp3)
+if [ $outfile = _OVERWRITE_ ]
+then
+    out=$(mktemp --dry-run --suffix=.mp3)
+else
+    out="$outfile"
+    overwrite=false
+fi
 
 # rate see
 # https://trac.ffmpeg.org/wiki/How%20to%20speed%20up%20/%20slow%20down%20a%20video
@@ -106,7 +118,7 @@ then
     echo "using rate command $rate_command"
 fi
 
-ffmpeg -i $in $rate_command -acodec libmp3lame -ab ${bitrate}k -ar 44100 $out
+ffmpeg -i $in $rate_command -acodec libmp3lame -qscale:a $quality $out
 
 if $overwrite
 then
