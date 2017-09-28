@@ -56,6 +56,7 @@ RESORTS_ORDER = [
     'Leo',
     'Kinderzeit',
     'Fussball',
+    'Fußball',
     ]
 
 RESORT_ORDER_MATCH_TRESHOLD = 0.75
@@ -69,6 +70,7 @@ RESORTS_BLACKLIST = [
     'ZEIT im Osten',
     'Kinderzeit',
     'Fussball',
+    'Fußball',
     'Feuilleton',
     'Leo - ZEIT fuer Kinder',
         ]
