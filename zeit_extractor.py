@@ -208,17 +208,15 @@ class Article():
                 self._content.append(text)
 
         # has audio
-        audio = root.find('.//html:div[@class="article_text"]//html:a[@class="audio_link_box"]', namespaces)
-        if audio is not None:
+        # by default, assume that there is no audio; only if there is a link
+            # with the appropriate content, this is assumed to have audio
+        self._hasaudio = False
+        for link in root.findall('.//html:div[@class="article_text"]//html:a[@class="x-zeit-link-box"]', namespaces):
             # check that link is an audio link
-            target = audio.attrib['href']
-            description = audio.find('./html:span', namespaces).text
-            if 'audio' not in description:
-                if 'zeit.de/misc_static_files' not in target:
-                    raise AttributeError('audio link to {} in {} looks strange'.format(target, xhtml_file_name))
-            self._hasaudio = True
-        else:
-            self._hasaudio = False
+            target = link.attrib['href']
+            description = link.find('./html:span', namespaces).text
+            if 'audio' in description and 'zeit.de/misc_static_files' in target:
+                self._hasaudio = True
 
 
         self._check_fields()
