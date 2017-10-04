@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 
 
-DEBUG=true
+DEBUG=false
 
 function usage()
 {
@@ -28,6 +28,7 @@ OPTIONS:
                             <bit>: 8, 16
                             <sur>: mono, stereo
                         default: 24khz_16bit_mono
+    --debug             run in debug mode (more verbose output)
     -h, --help          show this help and exit
 
 EOF
@@ -61,6 +62,10 @@ do
         ("-h" | "--help")
             usage
             exit 0
+            ;;
+        ("--debug")
+            DEBUG=true
+            shift
             ;;
         ("--codec")
             codec=$(echo $2 | tr '[:lower:]' '[:upper:]')
@@ -127,6 +132,12 @@ case $output_file in
 esac
 
 
+# "status" output
+echo reading file $input_file 
+# by default, make curl silent
+curl_silent_params="--silent"
+
+
 if $DEBUG
 then
     cat <<EOF
@@ -137,6 +148,9 @@ parameters used:
     rate:       $rate
     language:   $language
 EOF
+
+    curl_silent_params=""
 fi
 
-curl -o $output_file --data "key=$key&hl=$language&r=$rate&c=$codec&f=$format&src=$text" http://api.voicerss.org/?
+
+curl $curl_silent_params -o $output_file --data "key=$key&hl=$language&r=$rate&c=$codec&f=$format&src=$text" http://api.voicerss.org/?
