@@ -202,6 +202,15 @@ class Article():
         #       https://stackoverflow.com/questions/17191971) but this does not
         #       seem to be supported by ElementTree
         #           SyntaxError: prefix 'ancestor' not found in prefix map
+        #       To test the expression, use e.g.
+        #           xmlstarlet sel -R -N 'html=http://www.w3.org/1999/xhtml' -t -c \
+        #               './/html:div[@class="article_text"]//html:p[not(ancestor::html:div[@class="x-zeit-box"])]' \
+        #               dos.xhtml | xmlstarlet fo | nvim -
+        #       Note: lxml seems to be capable to do this, using the xpath() method:
+        #               root.xpath(
+        #                   './/xhtml:div[@class="article_text"]//xhtml:p[not(ancestor::xhtml:div[@class="x-zeit-box"])]',
+        #                   namespaces={ 'xhtml': "http://www.w3.org/1999/xhtml" })
+
         self._content = list()
         for paragraph in root.findall('.//html:div[@class="article_text"]//html:p', namespaces):
             text = ''.join(paragraph.itertext())
