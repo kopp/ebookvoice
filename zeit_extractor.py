@@ -212,11 +212,20 @@ class Article():
         #                   namespaces={ 'xhtml': "http://www.w3.org/1999/xhtml" })
 
         self._content = list()
-        for paragraph in root.findall('.//html:div[@class="article_text"]//html:p', namespaces):
+        # parse with lxml xpath function
+        from lxml import etree
+        lxml_root = etree.parse(xhtml_file_name)
+        #for paragraph in root.findall('.//html:div[@class="article_text"]//html:p', namespaces):
+        for paragraph in lxml_root.xpath(
+                './/html:div[@class="article_text"]//html:p[not(ancestor::html:div[@class="x-zeit-box"])]',
+                namespaces={ 'html': "http://www.w3.org/1999/xhtml" }):
             text = ''.join(paragraph.itertext())
             # skip empty paragraphs (links etc):
             if text:
                 self._content.append(text)
+
+# TODO: 'Hinter der Geschichte'
+# bspw. <div class="group"><div class="additional-content"><div class="x-zeit-box"><p class="h3">Hinter der Geschichte</p><p class="paragraph "><b>Die Idee:</b> Da ist eine Sache, die viele Eltern in der ZEIT-Redaktion beschäftigt. Und viele Leser auch: Ihre Kinder machen Abitur und möchten für ein Jahr ins Ausland. Aber was dort tun? Jobben, chillen oder helfen?</p><p class="paragraph "><b>Die Recherche:</b> Vier Redakteure aus den Ressorts Chancen und Dossier begleiteten junge Reisende auf drei Kontinente.</p><p class="paragraph "><b>Die Herausforderung</b> stellt sich dieses Mal beim Lesen: Sollen Eltern diese Reportage an ihre Töchter und Söhne weitergeben? Oder sollen die Kinder ihre Erfahrungen nicht besser selber machen?</p></div></div></div>
 
         # has audio
         # by default, assume that there is no audio; only if there is a link
