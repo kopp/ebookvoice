@@ -6,7 +6,7 @@ Extract articles from Die Zeit epub, store them as plain text, one article per f
 Optionally sort the articles by resort by prefixing them with a running number.
 '''
 
-import xml.etree.ElementTree as ET
+from lxml import etree
 import re
 import argparse
 import os.path
@@ -106,7 +106,7 @@ class Article():
     def parse(self, xhtml_file_name):
         '''Parse one article from one xhtml file.'''
         logging.debug('Processing file {}'.format(xhtml_file_name))
-        tree = ET.parse(xhtml_file_name)
+        tree = etree.parse(xhtml_file_name)
         root = tree.getroot()
 
         # generate a namespaces dictionary
@@ -188,37 +188,24 @@ class Article():
                 self._resort = match.group(1)
 
         # content
-        # TODO: There are short sentences, that are quoted from later parts of
+        # Note: There are short sentences, that are quoted from later parts of
         #       the text, in a
         #           div[@class="additional-content"]/div[@class="x-zeit-box"]
         #       Unfortunately, the same xml markup is used for other parts of
         #       the text that might be important and they are not marked
         #       specially.
-        #       Something like
+        #       The xpath
         #           './/html:div[@class="article_text"]//html:p[not(ancestor::html:div[@class="x-zeit-box"])]
-        #       would be nice to limit the search to p's that are not part of
-        #       the x-zeit-box (see
+        #       limits the search to p's that are not part of the x-zeit-box (see
         #       https://www.w3schools.com/xml/xpath_axes.asp and
-        #       https://stackoverflow.com/questions/17191971) but this does not
-        #       seem to be supported by ElementTree
+        #       https://stackoverflow.com/questions/17191971).
+        #       This is not supported by ElementTree, due to
         #           SyntaxError: prefix 'ancestor' not found in prefix map
-        #       To test the expression, use e.g.
-        #           xmlstarlet sel -R -N 'html=http://www.w3.org/1999/xhtml' -t -c \
-        #               './/html:div[@class="article_text"]//html:p[not(ancestor::html:div[@class="x-zeit-box"])]' \
-        #               dos.xhtml | xmlstarlet fo | nvim -
-        #       Note: lxml seems to be capable to do this, using the xpath() method:
-        #               root.xpath(
-        #                   './/xhtml:div[@class="article_text"]//xhtml:p[not(ancestor::xhtml:div[@class="x-zeit-box"])]',
-        #                   namespaces={ 'xhtml': "http://www.w3.org/1999/xhtml" })
-
+        #       lxml supports this, though, using the xpath() method.
         self._content = list()
-        # parse with lxml xpath function
-        from lxml import etree
-        lxml_root = etree.parse(xhtml_file_name)
-        #for paragraph in root.findall('.//html:div[@class="article_text"]//html:p', namespaces):
-        for paragraph in lxml_root.xpath(
+        for paragraph in root.xpath(
                 './/html:div[@class="article_text"]//html:p[not(ancestor::html:div[@class="x-zeit-box"])]',
-                namespaces={ 'html': "http://www.w3.org/1999/xhtml" }):
+                namespaces=namespaces):
             text = ''.join(paragraph.itertext())
             # skip empty paragraphs (links etc):
             if text:
@@ -559,7 +546,7 @@ def parse_arguments_and_execute():
                 try:
                     filename = os.path.join(basedir, resource)
                     article.parse(filename)
-                except ET.ParseError as e:
+                except etree.ParseError as e:
                     logging.error('xml parse error "{}" in {}; skipping that'.format(str(e), filename))
                     continue
                 if spell_numbers:
