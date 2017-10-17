@@ -56,6 +56,16 @@ ADD_INFO_RE = re.compile('\nZusätzliche Informationen\n.*', re.DOTALL)
 UNNECESSARY_NEWLINES_RE = re.compile('(?<=\S)( *\n *)(?=\S)')
 # unnecessary whitespace
 UNNECESSARY_WHITESPACE_RE = re.compile('(?<=\n)( +)')
+# fix for PD conversion errors:
+# Text contains things such as
+#     Ein paar Augenblicke, die sidenote##<##über 220.000
+#     Menschen##>####<##quelle##>####<##http://www.un.org/apps/news/story.asp
+#     unüberprüfbare Hochrechnungen liegen weit über den offiziellen
+#     Schätzungen der UN bei 316.000 Todesopfern (englisch, 2013)##>## das
+#     Leben kosteten
+# here, the part between 'sidenote##<##' and '##>##' is necessary, the rest to
+# be ignored.
+SIDNOTE_ERRORS_RE = re.compile(r'sidenote##<##(.*)##>####<##(.*)##>####<##(.*)##>##')
 
 # get article number from url
 ARTICLE_NUMBER_FROM_URL_RE = re.compile(r'.*perspective-daily.de/article/([0-9]+).*')
@@ -447,6 +457,8 @@ def filter_raw_pdf_text(pdf_text):
     pdf_text = UNNECESSARY_NEWLINES_RE.sub(' ', pdf_text)
     # remove leading whitespace
     pdf_text = UNNECESSARY_WHITESPACE_RE.sub('', pdf_text)
+    # fix errors in pdf export, when sidenotes are exported
+    pdf_text = SIDNOTE_ERRORS_RE.sub(r'\1', pdf_text)
     return pdf_text
 
 
