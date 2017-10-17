@@ -211,8 +211,19 @@ class Article():
             if text:
                 self._content.append(text)
 
-# TODO: 'Hinter der Geschichte'
-# bspw. <div class="group"><div class="additional-content"><div class="x-zeit-box"><p class="h3">Hinter der Geschichte</p><p class="paragraph "><b>Die Idee:</b> Da ist eine Sache, die viele Eltern in der ZEIT-Redaktion beschäftigt. Und viele Leser auch: Ihre Kinder machen Abitur und möchten für ein Jahr ins Ausland. Aber was dort tun? Jobben, chillen oder helfen?</p><p class="paragraph "><b>Die Recherche:</b> Vier Redakteure aus den Ressorts Chancen und Dossier begleiteten junge Reisende auf drei Kontinente.</p><p class="paragraph "><b>Die Herausforderung</b> stellt sich dieses Mal beim Lesen: Sollen Eltern diese Reportage an ihre Töchter und Söhne weitergeben? Oder sollen die Kinder ihre Erfahrungen nicht besser selber machen?</p></div></div></div>
+        # contents 'Hinter der Geschichte'
+        # some of the x-zeit-box'es are interesting, though -- the ones that
+        # include "Hinter der Geschichte".  Look for those additionally and
+        # append that to the content.
+        for box in root.findall('.//html:div[@class="group"]/html:div[@class="additional-content"]/html:div[@class="x-zeit-box"]', namespaces):
+            headline = box.find('.//html:p[@class="h3"]', namespaces)
+            if headline is not None and headline.text is not None and "Hinter der Geschichte" in headline.text:
+                hinter_der_geschichte = []
+                for paragraph in box.findall('./html:p', namespaces):
+                    text = ''.join(paragraph.itertext())
+                    if text:
+                        hinter_der_geschichte.append(text)
+                self._content += hinter_der_geschichte
 
         # has audio
         # by default, assume that there is no audio; only if there is a link
