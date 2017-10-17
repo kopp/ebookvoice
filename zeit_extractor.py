@@ -232,9 +232,10 @@ class Article():
         for link in root.findall('.//html:div[@class="article_text"]//html:a[@class="x-zeit-link-box"]', namespaces):
             # check that link is an audio link
             target = link.attrib['href']
-            description = link.find('./html:span', namespaces).text
-            if 'audio' in description and 'zeit.de/misc_static_files' in target:
-                self._hasaudio = True
+            description = link.find('./html:span', namespaces)
+            if description is not None and description.text is not None:
+                if 'audio' in description.text and 'zeit.de/misc_static_files' in target:
+                    self._hasaudio = True
 
 
         self._check_fields()
