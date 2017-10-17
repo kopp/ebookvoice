@@ -48,6 +48,14 @@ ARTICLE_RE = [
 FOOTNOTE_RE = re.compile(' +(#|\*)[0-9]+\n *')
 # fint the end of a pdf that contains additional information
 ADD_INFO_RE = re.compile('\nZusätzliche Informationen\n.*', re.DOTALL)
+# unnecessary newlines -- those that are between two lines of text
+# Note: The '(?= )' is a _lookahead_; it makes sure, that the symbol following
+#       the matching group (the break) is \S -- but it is not part of the
+#       match, that will be used for substitution.  '(?<= )' is a lookbehind,
+#       which likewise asserts, that the preceeding symbol is \S...
+UNNECESSARY_NEWLINES_RE = re.compile('(?<=\S)( *\n *)(?=\S)')
+# unnecessary whitespace
+UNNECESSARY_WHITESPACE_RE = re.compile('(?<=\n)( +)')
 
 # get article number from url
 ARTICLE_NUMBER_FROM_URL_RE = re.compile(r'.*perspective-daily.de/article/([0-9]+).*')
@@ -435,6 +443,10 @@ def filter_raw_pdf_text(pdf_text):
     pdf_text = FOOTNOTE_RE.sub(' ', pdf_text)
     # remove additional information at the end of the article.
     pdf_text = ADD_INFO_RE.sub('', pdf_text)
+    # remove unnecessary newlines
+    pdf_text = UNNECESSARY_NEWLINES_RE.sub(' ', pdf_text)
+    # remove leading whitespace
+    pdf_text = UNNECESSARY_WHITESPACE_RE.sub('', pdf_text)
     return pdf_text
 
 
