@@ -582,13 +582,13 @@ def get_many_articles(numbers_or_urls, session, article_format):
             number = int(identifier)
             content = get_article_by_number(number, session, article_format)
         else:
-            content = get_article_by_url(url)
+            content = get_article_by_url(identifier)
             # get unique_identifier
-            url_match = ARTICLE_NUMBER_FROM_URL_RE.match(url)
+            url_match = ARTICLE_NUMBER_FROM_URL_RE.match(identifier)
             if url_match:
                 unique_identifier = url_match.group(1)
             else:
-                unique_identifier = 'url_' + re.sub('[^a-zA-Z0-9]', '', url)
+                unique_identifier = 'url_' + re.sub('[^a-zA-Z0-9]', '', identifier)
         # sort outcome of operation depending on success/failure
         if not content:
             LOG.warning('Unable to get article {} due to {}'.format(identifier, content))
