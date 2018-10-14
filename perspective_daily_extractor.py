@@ -2,6 +2,11 @@
 
 '''Extract plain text from perspective daily articles.'''
 
+# pylint: disable=wrong-import-order
+# pylint: disable=bad-continuation
+# pylint: disable=line-too-long
+# pylint: disable=invalid-name
+# pylint: disable=logging-format-interpolation
 
 
 import urllib.request
