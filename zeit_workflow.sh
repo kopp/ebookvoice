@@ -2,7 +2,7 @@
 
 
 # parameter
-AUDIO_RATE=2.2      # speedup factor
+AUDIO_RATE=2.4      # speedup factor
 VORLESER_RATE=10    # arbitr units of vorleser
 AUDIO_QUALITY=""    # defaults to empty; otherwise set to --quality <value>
 VORLESER_QUALITY="" # defaults to empty; otherwise set to --format <format>
