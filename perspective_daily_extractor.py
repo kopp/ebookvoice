@@ -734,6 +734,7 @@ def log_in(email_address, password):
         return (None, None)
     LOG.debug('csrfmiddlewaretoken is {}'.format(values['csrfmiddlewaretoken']))
     # execute post request
+    session.headers.update({'Referer': login_url}) # required since 2018-10-15
     article_overview = session.post(login_url, data=values)
     if article_overview:
         LOG.debug('Posting login to {}; getting {}'.format(login_url, article_overview))
