@@ -48,6 +48,8 @@ ARTICLE_RE = [
         flags=re.DOTALL),
         ]
 
+AUDIO_RE = re.compile(r"<audio-player url='(.*)' title=.*></audio-player>")
+
 ## pdf
 # footnote: some spaces, then # or *, the a number, then a newline and again some spaces.
 FOOTNOTE_RE = re.compile(' +(#|\*)[0-9]+\n *')
@@ -76,7 +78,7 @@ SIDNOTE_ERRORS_RE = re.compile(r'sidenote##<##(.*)##>####<##(.*)##>####<##(.*)##
 ARTICLE_NUMBER_FROM_URL_RE = re.compile(r'.*perspective-daily.de/article/([0-9]+).*')
 
 # default output name
-DEFAULT_OUT_NAME = 'pd{number}.txt'
+DEFAULT_OUT_NAME = 'pd{number}.{ext}'
 # patterns for output file should look like this
 OUT_PATTERN_RE = re.compile('.*{number}.*')
 
@@ -119,6 +121,31 @@ class ArticleFormat(Enum):
     '''enum specifying the type of article used'''
     HTML = 1
     PDF = 2
+    AUDIO = 3
+    AUDIO_OVER_HTML = 5 # use audio if available, fallback to HTML; use for requests
+    AUDIO_OVER_PDF = 6  # ", fallback to PDF "
+
+def is_audio_preferred(article_format):
+    '''Check, whether the given ArticleFormat is one that prefers Audio over something.'''
+    return (ArticleFormat.AUDIO_OVER_HTML == article_format) or (ArticleFormat.AUDIO_OVER_PDF == article_format)
+
+def extension_for_format(article_format):
+    '''Return the default extension for the given article format.'''
+    if article_format in [ArticleFormat.HTML, ArticleFormat.PDF]:
+        return 'txt'
+    elif article_format is ArticleFormat.AUDIO:
+        return 'mp3'
+    else:
+        raise NotImplementedError('Unable to propose file extension for format {}'.format(article_format))
+
+def get_secondary_format(article_format):
+    '''Get the not-preferred format if available.'''
+    if article_format is ArticleFormat.AUDIO_OVER_HTML:
+        return ArticleFormat.HTML
+    if article_format is ArticleFormat.AUDIO_OVER_PDF:
+        return ArticleFormat.PDF
+    else:
+        raise ValueError('Format {} has no not-preferred format'.format(article_format))
 
 
 class TagMatcher:
@@ -412,20 +439,39 @@ def get_article_by_number(article_number, session, article_format):
     :param article_number int: Number to download
     :param session requests.Session: session that is correctly logged on
     :param article_format ArticleFormat: select the format to get
-    :return str|bytes|requests.Response: if it was possible to fetch the
-        article: content in html (from opening to closing div) or content of
-        the pdf in bytes; if unable to fetch it, GET-reply that evalutes to
-        False.
+    :return (str|bytes|requests.Response, ArticleFormat):
+        if it was possible to fetch the article: content in html (from
+        opening to closing div) or content of the pdf or audio file in bytes,
+        second parameter is the article format fetched.
+        If unable to fetch it, GET-reply that evalutes to False and None.
     '''
+    LOG.debug('Format {} requested for article no {}'.format(article_format, article_number))
     url = '{}/article/{}'.format(BASE_URL, article_number)
     # in both cases (html, pdf), access the html article
     article = session.get(url)
     if not article:
-        LOG.warn('Unable to download article number {} at {}'.format(article_number, url))
-        return article
+        LOG.warning('Unable to download article number {} at {}'.format(article_number, url))
+        return article, None
     else:
         LOG.debug('Successfully accessed article no {} at {}: {}'.format(article_number, url, article))
         #LOG.debug('Article text: {}'.format(article.text))
+        # if audio is preferred, try to get it and return that
+        if is_audio_preferred(article_format):
+            LOG.debug('Audio is preferred for article {}'.format(article_number))
+            audio_url = extract_audio_url_if_available(article.text)
+            if audio_url:
+                LOG.debug('Article no {} has audio at {}'.format(article_number, audio_url))
+                audio_response = session.get(audio_url)
+                if not audio_response:
+                    LOG.warn('Unable to download audio for article number {} from {}'.format(article_number, audio_url))
+                    return audio_response, None
+                else:
+                    LOG.debug('downloaded audio for article number {} successfully'.format(article_number))
+                    return audio_response.content, ArticleFormat.AUDIO
+            else:
+                article_format = get_secondary_format(article_format)
+                LOG.debug('Article no {} has no audio; now looking for format {}'.format(article_number, article_format))
+        # if no audio is requested or it's not possible to get some, check for other formats
         if article_format is ArticleFormat.PDF:
             # for the pdf we need the redirected url (which contains some magic
             # code after the article number) ...
@@ -436,16 +482,28 @@ def get_article_by_number(article_number, session, article_format):
             pdf_response = session.get(pdf_url)
             if not pdf_response:
                 LOG.warn('Unable to download pdf article for number {} at {}'.format(article_number, pdf_url))
-                return pdf_response
+                return pdf_response, None
             else:
                 LOG.debug('Successfully accessed pdf of article no {} at {}'.format(article_number, pdf_url))
                 # article is complete pdf
-                return pdf_response.content
+                return pdf_response.content, ArticleFormat.PDF
         elif article_format is ArticleFormat.HTML:
             # article is only part of the html -- extract that
-            return extract_article_from_html(article.text)
+            return extract_article_from_html(article.text), ArticleFormat.HTML
         else:
             raise NotImplementedError('format {} not implemented in get_article_by_number'.format(article_format))
+
+def extract_audio_url_if_available(article_html):
+    '''
+    Get the url of an audio file from the html content of the article.
+    If not available, return None.
+    '''
+    match = AUDIO_RE.search(article_html)
+    if match:
+        return match.group(1)
+    else:
+        return None
+
 
 
 def filter_raw_pdf_text(pdf_text):
@@ -516,12 +574,12 @@ class Article:
     '''
     Simple struct to hold article text
     :param identifier: (hopefully) unique identifier for this article.
-    :param text: unparsed content of the article (may be binary pdf or html)
+    :param content: unparsed content of the article (may be binary audio, binary pdf or html)
     :param article_format ArticleFormat: Format of the article
     '''
-    def __init__(self, identifier, text=None, article_format=None):
+    def __init__(self, identifier, content=None, article_format=None):
         self._identifier = identifier
-        self._text = text
+        self._raw_content = content
         self._format = article_format
 
     def get_identifier(self):
@@ -529,13 +587,19 @@ class Article:
 
     def is_impossible_to_get(self):
         '''Whether it is impossible to get the article.'''
-        return self._text is None
+        return self._raw_content is None
 
     def get_text(self):
         '''
         Return text as plain text (i.e. not parsed).
         '''
-        return self._text
+        return self._raw_content
+
+    def get_format(self):
+        '''
+        Return the kind of available format (text/audio).
+        '''
+        return self._format
 
     def get_article_number(self):
         '''
@@ -550,7 +614,7 @@ class Article:
     def get_article_as_plain_text(self):
         '''
         Parse article content.
-        Assumes that self._text is article text in html from opening to closing div
+        Assumes that self._raw_content is article text in html from opening to closing div
         :return str: article in plain text
         '''
         if self._format is ArticleFormat.HTML:
@@ -558,13 +622,21 @@ class Article:
             #xml = '<article>' + article + '</article>' # this would be necessary to add add a top level tag as required by xml
             #root = ET.fromstring(xml) # this does not work because the stuff from the website is malformed
             parser = PerspectiveDailyArticleParser()
-            parser.feed(self._text)
+            parser.feed(self._raw_content)
             return parser.get_text()
         elif self._format is ArticleFormat.PDF:
-            return extract_text_from_pdf(self._text)
+            return extract_text_from_pdf(self._raw_content)
+        elif self._format is ArticleFormat.AUDIO:
+            raise ValueError('Unable to generate text from an audio type')
         else:
             raise NotImplementedError('It seems like the content is neither in html nor in pdf format; the new format {} not yet implemented.'.format(self._format))
 
+
+    def get_article_as_bytes(self):
+        if self._format in [ArticleFormat.HTML, ArticleFormat.PDF]:
+            return self.get_article_as_plain_text().encode('UTF-8')
+        else:
+            return self._raw_content
 
 
 def get_many_articles(numbers_or_urls, session, article_format):
@@ -583,9 +655,10 @@ def get_many_articles(numbers_or_urls, session, article_format):
     for identifier in numbers_or_urls:
         content = None
         unique_identifier = None # may be number or derived from url
+        returned_format = None
         if is_number(identifier):
             number = int(identifier)
-            content = get_article_by_number(number, session, article_format)
+            content, returned_format = get_article_by_number(number, session, article_format)
         else:
             content = get_article_by_url(identifier)
             # get unique_identifier
@@ -599,7 +672,7 @@ def get_many_articles(numbers_or_urls, session, article_format):
             LOG.warning('Unable to get article {} due to {}'.format(identifier, content))
             failures.append(identifier)
         else:
-            articles.append(Article(identifier, content, article_format))
+            articles.append(Article(identifier, content, returned_format))
     # return what was fetched
     return articles, failures
 
@@ -609,13 +682,14 @@ def save_list_of_articles(articles, outfile_pattern):
     Store the given articles to outfiles generated from given pattern.
     :param articles list<Article>: valid articles to store
     :param outfile_pattern str: pattern for outfile, should include a
-        "{number}".
+        "{number}" and "{ext}" for the extension.
     '''
     for art in articles:
-        filename = outfile_pattern.format(number=art.get_identifier())
+        extension = extension_for_format(art.get_format())
+        filename = outfile_pattern.format(number=art.get_identifier(), ext=extension)
         LOG.info('Going to write output to file {}'.format(filename))
-        with open(filename, 'w') as f:
-            f.write(art.get_article_as_plain_text())
+        with open(filename, 'wb') as f:
+            f.write(art.get_article_as_bytes())
 
 
 
@@ -664,7 +738,7 @@ def log_in(email_address, password):
     if article_overview:
         LOG.debug('Posting login to {}; getting {}'.format(login_url, article_overview))
     else:
-        LOG.error('Unable to login to {}: {}'.format(login_url, article_overview))
+        LOG.error('Unable to login to {}: {} due to {}'.format(login_url, article_overview, article_overview.text))
         return (None, None)
     latest_article_match = LATEST_ARTICLE_RE.search(article_overview.text)
     latest_article = None
@@ -759,7 +833,8 @@ if __name__ == '__main__':
             help='Output file for the article.  If you intend to '\
                     'output multiple files, make sure to use "{number}" in '\
                     'that name; this will be substituted by the article '\
-                    'number (or other identification).')
+                    'number (or other identification), where "{ext}" will get '\
+                    'replaced by the extension (txt or mp3).')
     parser.add_argument('--debug', action='store_const', dest='log_level',
             const=logging.DEBUG, default=logging.INFO,
             help='enable debug output')
@@ -769,6 +844,10 @@ if __name__ == '__main__':
     parser.add_argument('--use-html', action='store_const', dest='article_format',
             const=ArticleFormat.HTML, default=ArticleFormat.PDF,
             help='Extract the article from html (default is to extract from pdf).')
+    parser.add_argument('--prefer-text', action='store_const', dest='use_audio_if_available',
+            const=False, default=True,
+            help='Even if an audio version is available, get the text '
+                    '(default is to get audio if available).')
 
     args = parser.parse_args()
 
@@ -875,8 +954,19 @@ if __name__ == '__main__':
     # this is what should get fetched
     LOG.info('Going to get the following identifiers: {}'.format(identifiers_to_get))
 
+    # check, what format to get
+    article_format = args.article_format
+    if args.use_audio_if_available:
+        if ArticleFormat.HTML == article_format:
+            article_format = ArticleFormat.AUDIO_OVER_HTML
+        elif ArticleFormat.PDF == article_format:
+            article_format = ArticleFormat.AUDIO_OVER_PDF
+        else:
+            raise NotImplementedError('--prefer-audio not implemented for this format')
+
+
     # finally start to get stuff
-    articles, failures = get_many_articles(identifiers_to_get, session_latest_article[0], args.article_format)
+    articles, failures = get_many_articles(identifiers_to_get, session_latest_article[0], article_format)
 
     # store articles
     save_list_of_articles(articles, out_path)
