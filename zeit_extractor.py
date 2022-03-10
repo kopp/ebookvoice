@@ -28,12 +28,15 @@ RESORTS_ORDER = [
     'Seite 1',
     'Recht und Unrecht',
     'Wirtschaft',
+    'Streit',
     'Dossier',
     'Geschichte',
     'Chancen',
+    'leserbriefe',
     'Glauben und Zweifeln',
     'geld-spezial',
     'zeitmagazin',
+    'Stellenmarkt',
     'ZEIT magazin',
     'Krimi Spezial',
     'Chancen Spezial',
@@ -43,7 +46,6 @@ RESORTS_ORDER = [
     'Feuilleton',
     'Musik-Spezial',
     'Literatur-Spezial',
-    'leserbriefe',
     'Zeit zum Entdecken',
     'Krimi Spezial',
     'ZEIT der Leser',
@@ -73,6 +75,7 @@ RESORTS_BLACKLIST = [
     'Fußball',
     'Feuilleton',
     'Leo - ZEIT fuer Kinder',
+    'Stellenmarkt',
     ]
 
 RESORT_BLACKLIST_MATCH_TRESHOLD = 0.8
@@ -234,7 +237,7 @@ class Article():
             target = link.attrib['href']
             description = link.find('./html:span', namespaces)
             if description is not None and description.text is not None:
-                if 'audio' in description.text and 'zeit.de/misc_static_files' in target:
+                if 'vorgelesen' in description.text and 'zeit.de/misc_static_files' in target:
                     self._hasaudio = True
 
 
@@ -580,15 +583,25 @@ def parse_arguments_and_execute():
 
         # number articles by resort if requested
         if number_output:
-            paper.number_articles(RESORTS_ORDER, RESORT_ORDER_MATCH_TRESHOLD)
+            unknown_resorts = paper.number_articles(RESORTS_ORDER, RESORT_ORDER_MATCH_TRESHOLD)
+            if unknown_resorts is not None:
+                logging.warning('The following resorts were unknown: {}'.format(unknown_resorts))
 
         # write articles to file
         for article in paper.articles():
             try:
-                with open(outdir + '/' + article.generate_filename(), 'w') as f:
+                filename = outdir + '/' + article.generate_filename()
+                with open(filename, 'w') as f:
                     f.write(article.plain_text())
             except PermissionError:
                 quit_error('Not allowed to write to directory "{}".'.format(outdir), ERR_WRITE_PERM)
+            except OSError as e:
+                logging.warn('Skipping article {} due to {}'.format(article, e))
+            except:
+                import traceback
+                logging.warn('Caught strange exception when writing article {} to file {}'.format(
+                    article, filename))
+                traceback.print_stack()
 
         # remove temporary directory
         if keep_temp:
