@@ -2,7 +2,7 @@
 
 
 # parameter
-AUDIO_RATE=2.4      # speedup factor
+AUDIO_RATE=2.3      # speedup factor
 VORLESER_RATE=10    # arbitr units of vorleser
 AUDIO_QUALITY=""    # defaults to empty; otherwise set to --quality <value>
 VORLESER_QUALITY="" # defaults to empty; otherwise set to --format <format>
@@ -27,6 +27,7 @@ Options:
     --no-audio              Do not process audio files, just process text
                             (requires --week).
     --no-text               Do not process text files, just process audio.
+    --separate-folders      Use separate folders for selfmade/official audio.
     -w --week <week>        Look for input files for the given week number
                             (by default determine the number from found files).
     --year <year>           Look for input files for given year -- only use
@@ -56,6 +57,8 @@ year=$(date +%y)
 do_process_audio=true
 # whether to process text
 do_process_text=true
+# use separate folders for the two different kinds of audio
+output_to_separate_folders=false
 
 
 # parse command line options
@@ -96,6 +99,10 @@ do
             ;;
         (--no-text)
             do_process_text=false
+            shift 1
+            ;;
+        (--separate-folders)
+            output_to_separate_folders=true
             shift 1
             ;;
         (-w|--week)
@@ -148,6 +155,9 @@ then
     debug found release to be 20$year - $week
 fi
 
+# determine output folder name
+output_folder=zeit_${week_padded}_audio
+
 
 ## audio processing
 if $do_process_audio
@@ -158,17 +168,27 @@ then
     # make sure that the file exist
     if [ ! -f $zip_file ]
     then
-        echo Error: missing zip input file $epub_file
+        echo Error: missing zip input file $zip_file
         usage
         exit $EXIT_MISSING_INPUT_FILE
     fi
 
     # unzip and downsample mp3s
-    audio_dir=zeit_${week_padded}_audio
+    audio_dir=$output_folder
     mkdir $audio_dir
     pushd $audio_dir
     unzip $zip_file
     find . -name \*.mp3 -exec downsample_mp3 --rate $AUDIO_RATE $AUDIO_QUALITY {} \;
+    # if in one folder, prefix with 001_ to sort them correctly
+    # Note: GNU find does not work here, as it prefixes every filename with `./`
+    #       and somehow -execdir and basename don't seem to work...
+    if ! $output_to_separate_folders
+    then
+        for f in *.mp3
+        do
+            mv -v $f 001_${f}
+        done
+    fi
     popd
 fi
 
@@ -177,7 +197,7 @@ fi
 if $do_process_text
 then
     # get absolute paths
-    epub_file=$(readlink -f die_zeit?20${year}?${week}*.epub)
+    epub_file=$(readlink -f die_zeit?20${year}?${week_padded}*.epub)
 
     # make sure that the files exist
     if [ ! -f $epub_file ]
@@ -189,11 +209,30 @@ then
 
 
     # extract and read texts
-    selfmade_dir=zeit_${week_padded}_selfmade
-    mkdir $selfmade_dir
+    if $output_to_separate_folders
+    then
+        selfmade_dir=${output_folder}_selfmade
+    else
+        selfmade_dir=$output_folder
+    fi
+    mkdir -p $selfmade_dir
     pushd $selfmade_dir
     zeit_extractor -k -n -s -b $epub_file
-    find . -name \*.txt -exec vorleser --rate $VORLESER_RATE $VORLESER_QUALITY {} \;
+    # deprecated:
+    # find . -name \*.txt -exec vorleser --rate $VORLESER_RATE $VORLESER_QUALITY {} \;
+    # default
+    # find . -name \*.txt -exec vorleser --rate $VORLESER_RATE $VORLESER_QUALITY {} \;
+    # default make based
+    # Note: make allows to easily re-run until all files are processed
+    echo "all: $(ls *.txt | sed 's,$,.mp3 \\,')" > Makefile
+    echo "" >> Makefile
+    echo "%.txt.mp3: %.txt" >> Makefile
+    echo -e "\tazure_vorleser --voice de-DE-Stefan-Apollo --rate $AUDIO_RATE $<" >> Makefile
+    while ! make all
+    do
+        echo "Error in reading stuff -- retrying"
+    done
+
     popd
 fi
 
